@@ -2,6 +2,7 @@
   "name": "market-sight-server",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "nodemon index.js",
@@ -13,7 +14,8 @@
   "description": "",
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

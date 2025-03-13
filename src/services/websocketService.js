@@ -1,7 +1,9 @@
-const WebSocket = require('ws');
+import WebSocket from'ws';
+dotenv.config();
 
+const { WS_PORT } = process.env;
 // Tạo WebSocket Server
-const wss = new WebSocket.Server({ port: 3002 }); 
+const wss = new WebSocket.Server({ port: WS_PORT }); 
 
 wss.on('connection', (ws) => {
     console.log('Client connected');

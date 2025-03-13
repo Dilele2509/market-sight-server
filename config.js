@@ -1,6 +1,6 @@
-const { createClient } = require('@supabase/supabase-js');
-const dotenv = require('dotenv');
-const assert = require('assert');
+import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+import assert from 'assert';
 
 dotenv.config();
 
@@ -23,4 +23,4 @@ async function testConnection() {
 
 testConnection(); 
 
-module.exports = { supabase };
+export { supabase };

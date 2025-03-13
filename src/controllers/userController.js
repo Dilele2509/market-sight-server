@@ -1,4 +1,4 @@
-const {getUsers} = require('../data/userData')
+import { getUsers } from '../data/userData.js';
 
 const getAllUsers = async (req, res) =>{
     try {
@@ -10,4 +10,4 @@ const getAllUsers = async (req, res) =>{
     }
 }
 
-module.exports = { getAllUsers }
+export {getAllUsers}

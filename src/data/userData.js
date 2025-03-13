@@ -1,4 +1,4 @@
-const {supabase} = require('../../config');
+import {supabase} from '../../config.js';
 
 const getUsers = async () => {
     const { data, error } = await supabase.from('users').select('*');
@@ -6,4 +6,4 @@ const getUsers = async () => {
     return data;
 };
 
-module.exports = { getUsers };
+export { getUsers };

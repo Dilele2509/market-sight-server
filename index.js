@@ -1,20 +1,18 @@
 'use strict';
-const dotenv = require('dotenv');
-const express = require('express');
-const config = require('./config.js');
+import dotenv from 'dotenv';
+import express from 'express';
+import userRoutes from './src/routes/userRoutes.js';
 
 dotenv.config();
 
 const { HOST, PORT } = process.env;
 
-const users = require('./src/routes/userRoutes'); 
 const app = express();
-
 app.use(express.json());
 
-app.use('/api/', users);
-// Start the server
-app.listen(PORT, HOST || '0.0.0.0', () => {
-  console.log(`App listening on url http://${HOST || '0.0.0.0'}:${PORT}`);
-});
+app.use('/api/', userRoutes);
 
+// Start the server
+app.listen(PORT || 3001, HOST || '0.0.0.0', () => {
+  console.log(`App listening on url http://${HOST || '0.0.0.0'}:${PORT || 3001}`);
+});
