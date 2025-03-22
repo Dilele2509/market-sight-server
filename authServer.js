@@ -13,6 +13,6 @@ app.use(express.json());
 app.use('/api/', authRoutes);
 
 // Start the server
-app.listen(PORT || 3002, HOST || '0.0.0.0', () => {
+app.listen(AUTH_PORT || 3002, HOST || '0.0.0.0', () => {
   console.log(`App listening on url http://${HOST || '0.0.0.0'}:${AUTH_PORT || 3002}`);
 });
