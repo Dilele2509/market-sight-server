@@ -8,6 +8,7 @@ const login = async (req, res, next) =>{
     const {email, password_hash} = req.body;
 
     //console.log(email, password_hash);
+    // console.log(ACCESOKEN_KEY);
 
     if (!email) {
         return res.status(400).json({ error: 'Missing email' });
@@ -23,7 +24,7 @@ const login = async (req, res, next) =>{
     }
 
     //authorization
-    const accessToken = jwt.sign(accountCheckData.data, ACCESS_TOKEN_KEY, { expiresIn: '30s'})
+    const accessToken = jwt.sign(accountCheckData.data, ACCESS_TOKEN_KEY, { expiresIn: '1d'})
 
     res.json({
         accessToken,
@@ -33,8 +34,15 @@ const login = async (req, res, next) =>{
 
 const authenticationToken = async (req, res, next) => {
     const authenticationHeader = req.headers['authorization'];
+
+    if (!authenticationHeader) {
+        return res.status(401).json({ error: 'Unauthorized: No token provided' });
+    }
+
     //'Bearer [token]'
     const token = authenticationHeader.split(' ')[1];
+
+    //console.log("key: ",ACCESS_TOKEN_KEY, "   token: ", token)
 
     if (!token) return res.status(401).json({ error: 'Missing token' });
 
