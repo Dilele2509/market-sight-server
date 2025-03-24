@@ -1,18 +1,18 @@
 import jwt from 'jsonwebtoken';
-import {checkAccountAvailable} from '../data/authData.js'
+import { checkAccountAvailable } from '../data/authData.js'
 
 const { ACCESS_TOKEN_KEY } = process.env
 
-const login = async (req, res, next) =>{
+const login = async (req, res, next) => {
     //authentication
-    const {email, password_hash} = req.body;
+    const { email, password_hash } = req.body;
 
     //console.log(email, password_hash);
     // console.log(ACCESOKEN_KEY);
 
     if (!email) {
         return res.status(400).json({ error: 'Missing email' });
-    }else if (!password_hash) {
+    } else if (!password_hash) {
         return res.status(400).json({ error: 'Missing password' });
     }
 
@@ -24,11 +24,10 @@ const login = async (req, res, next) =>{
     }
 
     //authorization
-    const accessToken = jwt.sign(accountCheckData.data, ACCESS_TOKEN_KEY, { expiresIn: '1d'})
+    const accessToken = jwt.sign(accountCheckData.data, ACCESS_TOKEN_KEY, { expiresIn: '1d' })
 
     res.json({
-        accessToken,
-        accountData: accountCheckData.data
+        accessToken
     })
 }
 
@@ -39,19 +38,25 @@ const authenticationToken = async (req, res, next) => {
         return res.status(401).json({ error: 'Unauthorized: No token provided' });
     }
 
-    //'Bearer [token]'
     const token = authenticationHeader.split(' ')[1];
 
-    //console.log("key: ",ACCESS_TOKEN_KEY, "   token: ", token)
+    //console.log("key: ", ACCESS_TOKEN_KEY, "   token: ", token);
 
-    if (!token) return res.status(401).json({ error: 'Missing token' });
+    if (!token) {
+        return res.status(401).json({ error: 'Missing token' });
+    }
 
     jwt.verify(token, ACCESS_TOKEN_KEY, (err, data) => {
-        console.log(err, data);
-        if(err) res.status(403, err);
+        //console.log('error: ', err, 'data: ', data);
 
-        next();
-    })
-}
+        if (err) {
+            return res.status(403).json({ error: 'Forbidden: Invalid token' });
+        }
+
+        req.user = data; // Lưu thông tin user từ token vào request
+        next(); // Chỉ tiếp tục nếu token hợp lệ
+    });
+};
+
 
 export { login, authenticationToken }

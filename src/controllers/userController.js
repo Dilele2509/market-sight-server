@@ -1,4 +1,4 @@
-import { getUsers } from '../data/userData.js';
+import { getUserByEmail, getUsers } from '../data/userData.js';
 
 const getAllUsers = async (req, res) =>{
     try {
@@ -10,4 +10,16 @@ const getAllUsers = async (req, res) =>{
     }
 }
 
-export {getAllUsers}
+const getUserDataByEmail = async (req, res) =>{
+    try {
+        //console.log(req.user);
+        const email = req.user.email;
+        const user = await getUserByEmail(email);
+        res.status(200).json(user);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Failed to get user data' });
+    }
+}
+
+export {getAllUsers, getUserDataByEmail}

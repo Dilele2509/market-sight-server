@@ -20,7 +20,7 @@ const checkAccountAvailable = async (email, password) => {
 
     // Xóa password_hash trước khi trả về
     delete userData.password_hash;
-
+    console.log('login successful');
     return { status: 200, data: userData };
 };
 
