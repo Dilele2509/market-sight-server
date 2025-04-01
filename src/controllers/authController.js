@@ -58,5 +58,12 @@ const authenticationToken = async (req, res, next) => {
     });
 };
 
+const logout = async (req, res) => {
+    const accessToken = req.body.token;
+    accessToken = accessToken.filter(accToken => accToken !== accessToken)
 
-export { login, authenticationToken }
+    res.status(200).json({message: 'logout successful'})
+};
+
+
+export { login, authenticationToken, logout };
