@@ -10,10 +10,13 @@ dotenv.config();
 const { HOST, PORT } = process.env;
 
 const app = express();
-app.use(cors({
-  origin: 'http://localhost:8080',
-  credentials: true // Cho phép gửi cookie (nếu có)
-}));
+
+const corsOptions = {
+  origin: 'http://localhost:8080', 
+  credentials: true,                // Cho phép gửi thông tin xác thực (cookie, header authorization)
+};
+
+app.use(cors(corsOptions));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

@@ -117,6 +117,7 @@ export const getTables = async (req, res) => {
       }
     };
 
+    console.log('now getting tables');
     res.json(tables);
   } catch (error) {
     logger.error(`Error getting tables: ${error.message}`);

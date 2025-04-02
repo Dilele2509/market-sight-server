@@ -8,6 +8,7 @@ import {
   getPostgresTables,
   automateDataMapping 
 } from '../controllers/dataController.js';
+import { authenticationToken } from '../controllers/authController.js';
 
 const router = express.Router();
 
@@ -20,11 +21,11 @@ const upload = multer({
 });
 
 // Routes
-router.get('/data/tables', getTables);
-router.post('/data/query', executeQuery);
-router.post('/data/upload/:table_name', upload.single('file'), uploadFile);
-router.post('/data/test-connection', testConnection);
-router.get('/data/datasources/postgres/tables', getPostgresTables);
-router.post('/data/automate-mapping', automateDataMapping);
+router.get('/data/tables',authenticationToken, getTables);
+router.post('/data/query',authenticationToken, executeQuery);
+router.post('/data/upload/:table_name',authenticationToken, upload.single('file'), uploadFile);
+router.post('/data/test-connection',authenticationToken, testConnection);
+router.get('/data/datasources/postgres/tables',authenticationToken, getPostgresTables);
+router.post('/data/automate-mapping',authenticationToken, automateDataMapping);
 
 export default router; 
