@@ -7,8 +7,7 @@ const login = async (req, res) => {
     //authentication
     const { email, password_hash } = req.body;
 
-    //console.log(email, password_hash);
-    console.log(ACCESOKEN_KEY);
+    console.log(email, password_hash);
 
     if (!email) {
         return res.status(400).json({ error: 'Missing email' });
@@ -40,14 +39,15 @@ const authenticationToken = async (req, res, next) => {
 
     const token = authenticationHeader.split(' ')[1];
 
-    console.log("key: ", ACCESS_TOKEN_KEY, "   token: ", token);
+    //console.log("key: ", ACCESS_TOKEN_KEY, "   token: ", token);
 
     if (!token) {
         return res.status(401).json({ error: 'Missing token' });
     }
 
     jwt.verify(token, ACCESS_TOKEN_KEY, (err, data) => {
-        console.log('error: ', err, 'data: ', data);
+        //console.log('error: ', err, 'data: ', data);
+        console.log('in auth token');
 
         if (err) {
             return res.status(403).json({ error: 'Forbidden: Invalid token' });
@@ -58,12 +58,5 @@ const authenticationToken = async (req, res, next) => {
     });
 };
 
-const logout = async (req, res) => {
-    const accessToken = req.body.token;
-    accessToken = accessToken.filter(accToken => accToken !== accessToken)
 
-    res.status(200).json({message: 'logout successful'})
-};
-
-
-export { login, authenticationToken, logout };
+export { login, authenticationToken };

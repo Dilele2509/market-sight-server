@@ -295,7 +295,8 @@ export const testConnection = async (req, res) => {
 };
 
 export const getPostgresTables = async (req, res) => {
-  const { connection_url } = req.query;
+  const { connection_url } = req.body;
+  console.log("connect url: ",connection_url);
   let sourceDb = null;
 
   try {

@@ -12,7 +12,7 @@ const app = express();
 
 const corsOptions = {
   origin: 'http://localhost:8080', 
-  credentials: true,                // Cho phép gửi thông tin xác thực (cookie, header authorization)
+  credentials: true,               
 };
 
 app.use(cors(corsOptions));
