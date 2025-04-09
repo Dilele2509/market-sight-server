@@ -1,4 +1,4 @@
-import { createSourceConnection, getSupabase, logger } from '../services/database.js';
+import { createSourceConnection, getSupabase, logger, testDatabaseConnection } from '../data/database.js';
 import pkg from 'pg';
 const { Pool } = pkg;
 import multer from 'multer';
@@ -10,14 +10,14 @@ import crypto from 'crypto';
 const SCHEMA_MAPPINGS = {
   customers: {
     required_fields: [
-      "customer_id", "first_name", "last_name", "email", 
-      "phone", "gender", "birth_date", "registration_date", 
+      "customer_id", "first_name", "last_name", "email",
+      "phone", "gender", "birth_date", "registration_date",
       "address", "city"
     ]
   },
   transactions: {
     required_fields: [
-      "transaction_id", "customer_id", "store_id", 
+      "transaction_id", "customer_id", "store_id",
       "transaction_date", "total_amount", "payment_method",
       "product_line_id", "quantity", "unit_price"
     ]
@@ -61,7 +61,7 @@ const validateAndMapData = (data, tableName) => {
 
     for (const row of data) {
       const mappedRow = {};
-      
+
       // Map existing fields
       for (const field of requiredFields) {
         if (row[field]) {
@@ -92,7 +92,7 @@ const validateAndMapData = (data, tableName) => {
   }
 };
 
-export const getTables = async (req, res) => {
+const getTables = async (req, res) => {
   try {
     const tables = {
       "Customer Profile": {
@@ -125,22 +125,27 @@ export const getTables = async (req, res) => {
   }
 };
 
-export const executeQuery = async (req, res) => {
-  const { table, query, connection_url } = req.body;
-  let sourceDb = null;
+const executeQuery = async (req, res) => {
+  const { table, query, connection_details } = req.body;
+  logger.info(`Executing query for table: ${table}`);
+
+  let pool = null;
 
   try {
-    logger.info(`Executing query for table: ${table}`);
-    
-    // Create connection to source database
-    sourceDb = await createSourceConnection(connection_url);
+    // Step 1: Create connection to source database
+    pool = await createSourceConnection(connection_details);
 
-    // Execute query
+    // Step 2: Execute query on source database
     logger.info(`Executing query on source database: ${query}`);
-    const result = await sourceDb.query(query);
-    const data = result.rows;
-    
-    if (!data.length) {
+    const result = await pool.query(query);
+
+    // Convert to array of objects
+    const rows = result.rows;
+    const columns = result.fields.map(field => field.name);
+
+    logger.info(`Query returned ${rows.length} rows from source database`);
+
+    if (rows.length === 0) {
       return res.json({
         success: true,
         data: [],
@@ -149,42 +154,39 @@ export const executeQuery = async (req, res) => {
       });
     }
 
-    // Map data to standard schema
-    const mappedData = validateAndMapData(data, table);
+    // Step 3: Map data to standard schema
+    const mappedData = validateAndMapData(rows, table);
     logger.info("Data mapped to standard schema");
 
-    // Insert into Supabase
+    // Step 4: Convert to JSON-serializable records
+    const records = convertToJsonSerializable(mappedData);
+
+    // Step 5: Insert into Supabase
     const supabase = getSupabase();
-    logger.info(`Inserting ${mappedData.length} records into Supabase`);
+    logger.info(`Inserting ${records.length} records into Supabase`);
 
     let insertedCount = 0;
     try {
-      // Insert records one by one to better handle errors
-      for (const record of mappedData) {
-        const { data: insertResponse, error } = await supabase
-          .from(table)
-          .upsert(record, { 
-            onConflict: 'customer_id',
-            ignoreDuplicates: false
-          });
-        
-        if (error) {
-          logger.warn(`Failed to insert record: ${error.message}`);
-          continue;
-        }
-        if (insertResponse) {
-          insertedCount++;
-        }
-      }
+      // Try to insert data
+      const { data, error } = await supabase
+        .from(table)
+        .insert(records);
+
+      if (error) throw error;
+
+      insertedCount = data ? data.length : 0;
     } catch (error) {
       logger.warn(`Insert failed: ${error.message}`);
     }
 
+    // Step 6: Prepare response data
+    const data = convertToJsonSerializable(rows);
+
     const response = {
       success: true,
-      data: convertToJsonSerializable(data),
-      row_count: data.length,
-      columns: Object.keys(data[0]),
+      data: data,
+      row_count: rows.length,
+      columns: columns,
       inserted_count: insertedCount
     };
 
@@ -193,21 +195,23 @@ export const executeQuery = async (req, res) => {
 
   } catch (error) {
     logger.error(`Error in query execution: ${error.message}`);
-    res.status(400).json({ error: error.message });
+    res.status(400).json({
+      detail: `Error executing query: ${error.message}`
+    });
   } finally {
-    if (sourceDb) {
-      await sourceDb.end();
+    if (pool) {
+      await pool.end();
     }
   }
 };
 
-export const uploadFile = async (req, res) => {
+const uploadFile = async (req, res) => {
   const { table_name } = req.params;
   const file = req.file;
 
   try {
     logger.info(`Received file upload request for table: ${table_name}`);
-    
+
     let data;
     if (file.originalname.endsWith('.csv')) {
       data = await new Promise((resolve, reject) => {
@@ -242,11 +246,11 @@ export const uploadFile = async (req, res) => {
       for (const record of mappedData) {
         const { data: insertResponse, error } = await supabase
           .from(table_name)
-          .upsert(record, { 
+          .upsert(record, {
             onConflict: 'customer_id',
             ignoreDuplicates: false
           });
-        
+
         if (error) {
           logger.warn(`Failed to insert record: ${error.message}`);
           continue;
@@ -272,31 +276,98 @@ export const uploadFile = async (req, res) => {
   }
 };
 
-export const testConnection = async (req, res) => {
+const testConnection = async (req, res) => {
   const { connection_url } = req.body;
-  let sourceDb = null;
+  let username, password, host, port, database;
 
-  try {
-    sourceDb = await createSourceConnection(connection_url);
-    await sourceDb.query('SELECT 1');
-    
-    res.json({
-      success: true,
-      message: "Connection successful"
-    });
-  } catch (error) {
-    logger.error(`Connection test failed: ${error.message}`);
-    res.status(400).json({ error: error.message });
-  } finally {
-    if (sourceDb) {
-      await sourceDb.end();
+  if (connection_url) {
+    console.log('Received connection_url:', connection_url);
+    try {
+      // Log the URL before parsing
+      logger.debug('URL to parse:', connection_url.replace(/\/\/[^:]+:[^@]+@/, '//***:***@'));
+
+      // Sử dụng URL constructor để phân tích cú pháp URL
+      const url = new URL(connection_url);
+
+      username = url.username;
+      password = url.password;
+      host = url.hostname;
+      port = url.port || '6543';  // Nếu không có port thì mặc định là 6543
+      database = url.pathname.replace('/', '') || 'postgres';  // Đảm bảo có database, nếu không dùng 'postgres'
+    } catch (error) {
+      logger.error('Error parsing connection URL:', error);
+      return res.status(400).json({
+        detail: `Invalid connection URL format: ${error.message}`
+      });
     }
+  }
+
+  // Kiểm tra các tham số kết nối
+  const missingParams = [];
+  if (!host) missingParams.push('host');
+  if (!port) missingParams.push('port');
+  if (!database) missingParams.push('database');
+  if (!username) missingParams.push('username');
+  if (!password) missingParams.push('password');
+
+  if (missingParams.length > 0) {
+    logger.warn('Missing parameters detected:', {
+      missingParams,
+      receivedParams: {
+        host: host || 'undefined',
+        port: port || 'undefined',
+        database: database || 'undefined',
+        username: username || 'undefined',
+        hasPassword: !!password
+      }
+    });
+    return res.status(400).json({
+      detail: `Missing required connection parameters: ${missingParams.join(', ')}`
+    });
+  }
+
+  // Kiểm tra định dạng Supabase
+  if (!host.includes('pooler.supabase.com')) {
+    logger.warn('Invalid Supabase pooler URL format', {
+      host,
+      expectedFormat: 'pooler.supabase.com'
+    });
+    return res.status(400).json({
+      detail: "Please use the Supabase Transaction Pooler URL format"
+    });
+  }
+
+  // Kiểm tra nếu cổng là một số hợp lệ
+  const portNumber = parseInt(port);
+  if (isNaN(portNumber)) {
+    logger.warn('Invalid port number', { port });
+    return res.status(400).json({
+      detail: "Port must be a valid number"
+    });
+  }
+
+  // Gọi hàm từ data layer để kiểm tra kết nối
+  try {
+    const result = await testDatabaseConnection(host, portNumber, database, username, password);
+    logger.info('Connection test completed successfully');
+    return res.json(result);
+  } catch (error) {
+    logger.error('Connection test failed', {
+      error: error.message,
+      errorCode: error.code,
+      errorDetail: error.detail,
+      errorHint: error.hint,
+      errorStack: error.stack
+    });
+    return res.status(400).json({
+      detail: `Connection failed: ${error.message}`
+    });
   }
 };
 
-export const getPostgresTables = async (req, res) => {
+const getPostgresTables = async (req, res) => {
   const { connection_url } = req.body;
-  console.log("connect url: ",connection_url);
+  console.log("connect url: ", connection_url);
   let sourceDb = null;
 
   try {
@@ -367,13 +438,13 @@ export const getPostgresTables = async (req, res) => {
   }
 };
 
-export const automateDataMapping = async (req, res) => {
+const automateDataMapping = async (req, res) => {
   const { source_connection_url, table, query } = req.body;
   let sourceDb = null;
 
   try {
     logger.info(`Starting automated data mapping process for table: ${table}`);
-    
+
     // Step 1: Test connection to source database
     sourceDb = await createSourceConnection(source_connection_url);
     logger.info("Successfully connected to source database");
@@ -382,7 +453,7 @@ export const automateDataMapping = async (req, res) => {
     logger.info(`Executing query: ${query}`);
     const result = await sourceDb.query(query);
     const data = result.rows;
-    
+
     if (!data.length) {
       return res.json({
         success: true,
@@ -408,11 +479,11 @@ export const automateDataMapping = async (req, res) => {
       for (const record of mappedData) {
         const { data: insertResponse, error } = await supabase
           .from(table)
-          .upsert(record, { 
+          .upsert(record, {
             onConflict: 'customer_id',
             ignoreDuplicates: false
           });
-        
+
         if (error) {
           logger.warn(`Failed to insert record: ${error.message}`);
           continue;
@@ -445,7 +516,7 @@ export const automateDataMapping = async (req, res) => {
 
   } catch (error) {
     logger.error(`Error in automated process: ${error.message}`);
-    res.status(400).json({ 
+    res.status(400).json({
       error: error.message,
       details: "Failed to complete the automated data mapping process"
     });
@@ -455,3 +526,12 @@ export const automateDataMapping = async (req, res) => {
     }
   }
 };
+
+export {
+  uploadFile,
+  getTables,
+  executeQuery,
+  testConnection,
+  getPostgresTables,
+  automateDataMapping
+}

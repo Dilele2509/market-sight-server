@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import userRoutes from './src/routes/userRoutes.js';
 import dataRoutes from './src/routes/dataRoutes.js';
+import segmentRoutes from './src/routes/segmentRoutes.js';
 import cors from 'cors';
 
 dotenv.config();
@@ -24,6 +25,7 @@ app.use(express.urlencoded({ extended: true }));
 // Routes
 app.use('/api/', userRoutes);
 app.use('/api/', dataRoutes);
+app.use('/api/', segmentRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

@@ -11,13 +11,13 @@ const sensitiveFilter = winston.format((info) => {
       /postgresql:\/\/([^:]+):([^@]+)@/g,
       'postgresql://$1:********@'
     );
-    
+
     // Mask connection_url query parameters
     info.message = info.message.replace(
       /connection_url=postgresql:\/\/([^:]+):([^@]+)@/g,
       'connection_url=postgresql://$1:********@'
     );
-    
+
     // Mask password parameters
     info.message = info.message.replace(/password=([^&\s]+)/g, 'password=********');
   }
@@ -48,40 +48,75 @@ const logger = winston.createLogger({
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
 
-export const createSourceConnection = async (connectionUrl) => {
+const createSourceConnection = async (connection_details) => {
   try {
     // Parse the connection URL
-    const url = new URL(connectionUrl);
-    const username = url.username;
-    const password = url.password;
-    const [host, port] = url.hostname.split(':');
-    const database = url.pathname.slice(1);
+    const host = connection_details.host;
+    const port = connection_details.port;
+    const database = connection_details.database;
+    const username = connection_details.username;
+    const password = connection_details.password;
+    const connectionString = `postgresql://${username}:${password}@${host}:${port}/${database}`;
 
-    logger.info(`Attempting to connect to PostgreSQL at ${host}:${port}/${database} with user ${username}`);
+    logger.info(`Attempting to create connection with details:`, {
+      host,
+      port,
+      database,
+      username,
+      // Don't log password for security
+      hasPassword: !!password
+    });
 
     const pool = new Pool({
-      host,
-      port: parseInt(port),
-      database,
-      user: username,
-      password: password,
-      ssl: {
-        rejectUnauthorized: false // Required for Supabase connections
-      }
+      connectionString,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
     });
 
     // Test the connection
-    await pool.query('SELECT 1');
-    logger.info(`Connected to source database at: ${host}:${port}/${database}`);
-    
-    return pool;
+    return pool.query('SELECT 1')
+      .then(() => {
+        logger.info('Source database connection successful');
+        return pool;
+      })
+      .catch(error => {
+        logger.error(`Error connecting to source database: ${error.message}`, {
+          errorCode: error.code,
+          errorDetail: error.detail,
+          errorHint: error.hint
+        });
+        throw error;
+      });
   } catch (error) {
-    logger.error(`Error connecting to source database: ${error.message}`);
+    logger.error(`Error creating source connection: ${error.message}`, {
+      errorStack: error.stack
+    });
     throw error;
   }
 };
 
-export const getSupabase = () => {
+const testDatabaseConnection = async (host, port, database, username, password) => {
+  try {
+    const pool = new Pool({
+      user: username,
+      host: host,
+      database: database,
+      password: password,
+      port: port,
+    });
+
+    const res = await pool.query('SELECT NOW()');
+    pool.end();
+    return {
+      success: true,
+      message: 'Connection successful',
+      data: res.rows,
+    };
+  } catch (error) {
+    throw new Error(`Connection failed: ${error.message}`);
+  }
+}
+
+const getSupabase = () => {
   try {
     logger.info(`Connecting to Supabase at: ${supabaseUrl}`);
     const client = createClient(supabaseUrl, supabaseKey, {
@@ -102,4 +137,4 @@ export const getSupabase = () => {
   }
 };
 
-export { logger }; 
+export { logger, testDatabaseConnection, getSupabase, createSourceConnection }; 
