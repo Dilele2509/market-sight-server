@@ -1,149 +1,154 @@
-import { createSourceConnection, getSupabase, logger, testDatabaseConnection } from '../data/database.js';
+import { createSourceConnection, getAllTable, getSupabase, logger, testDatabaseConnection } from '../data/database.js';
 import pkg from 'pg';
 const { Pool } = pkg;
 import multer from 'multer';
 import { parse } from 'csv-parse';
 import xlsx from 'xlsx';
 import crypto from 'crypto';
-
-// Schema mappings for each table
-const SCHEMA_MAPPINGS = {
-  customers: {
-    required_fields: [
-      "customer_id", "first_name", "last_name", "email",
-      "phone", "gender", "birth_date", "registration_date",
-      "address", "city"
-    ]
-  },
-  transactions: {
-    required_fields: [
-      "transaction_id", "customer_id", "store_id",
-      "transaction_date", "total_amount", "payment_method",
-      "product_line_id", "quantity", "unit_price"
-    ]
-  },
-  stores: {
-    required_fields: [
-      "store_id", "store_name", "address", "city",
-      "store_type", "opening_date", "region"
-    ]
-  },
-  product_lines: {
-    required_fields: [
-      "product_line_id", "name", "category", "subcategory",
-      "brand", "unit_cost"
-    ]
-  }
-};
+import { SCHEMA_MAPPINGS } from '../services/schemaMapping.js';
 
 // Helper function to convert data to JSON-serializable format
 const convertToJsonSerializable = (obj) => {
   if (obj instanceof Date) {
     return obj.toISOString();
-  } else if (typeof obj === 'number' && Number.isInteger(obj)) {
-    return parseInt(obj);
-  } else if (typeof obj === 'number') {
-    return parseFloat(obj);
-  } else if (Array.isArray(obj)) {
-    return obj.map(item => convertToJsonSerializable(item));
-  } else if (obj && typeof obj === 'object') {
-    return Object.fromEntries(
-      Object.entries(obj).map(([key, value]) => [key, convertToJsonSerializable(value)])
-    );
+  } else if (typeof obj === 'object' && obj !== null) {
+    if (Array.isArray(obj)) {
+      return obj.map(item => convertToJsonSerializable(item));
+    } else {
+      const result = {};
+      for (const key in obj) {
+        result[key] = convertToJsonSerializable(obj[key]);
+      }
+      return result;
+    }
   }
   return obj;
-};
+}
 
 const validateAndMapData = (data, tableName) => {
   try {
-    const requiredFields = SCHEMA_MAPPINGS[tableName].required_fields;
-    const mappedData = [];
+    const schema = SCHEMA_MAPPINGS[tableName];
+    if (!schema) {
+      throw new Error(`No schema mapping found for table '${tableName}'`);
+    }
+    const requiredFields = schema.required_fields;
 
-    for (const row of data) {
-      const mappedRow = {};
 
-      // Map existing fields
-      for (const field of requiredFields) {
-        if (row[field]) {
-          mappedRow[field] = row[field];
-        } else {
-          // Handle missing required fields with defaults
-          if (field.includes('date')) {
-            mappedRow[field] = new Date().toISOString();
-          } else if (field.includes('id')) {
-            mappedRow[field] = mappedData.length + 1;
-          } else if (field.includes('amount') || field.includes('cost') || field.includes('price')) {
-            mappedRow[field] = 0.0;
-          } else if (field.includes('quantity')) {
-            mappedRow[field] = 1;
-          } else {
-            mappedRow[field] = "Unknown";
+    // Create a mapping of source columns to target columns
+    const columnMapping = {};
+    for (const reqField of requiredFields) {
+      // Try exact match first
+      if (data.some(row => reqField in row)) {
+        columnMapping[reqField] = reqField;
+        continue;
+      }
+
+      // Try case-insensitive match
+      for (const row of data) {
+        for (const col in row) {
+          if (col.toLowerCase() === reqField.toLowerCase()) {
+            columnMapping[col] = reqField;
+            break;
           }
         }
       }
-
-      mappedData.push(mappedRow);
     }
 
-    return mappedData;
+    // Check for missing required fields
+    const mappedFields = new Set(Object.values(columnMapping));
+    const missingFields = requiredFields.filter(field => !mappedFields.has(field));
+
+    if (missingFields.length > 0) {
+      logger.warn(`Missing fields will be filled with defaults: ${missingFields.join(', ')}`);
+
+      // Add default values for missing fields
+      for (const row of data) {
+        for (const field of missingFields) {
+          if (field.toLowerCase().includes('date')) {
+            row[field] = new Date();
+          } else if (field.toLowerCase().includes('id')) {
+            row[field] = data.indexOf(row) + 1;
+          } else if (field.toLowerCase().includes('amount') ||
+            field.toLowerCase().includes('cost') ||
+            field.toLowerCase().includes('price')) {
+            row[field] = 0.0;
+          } else if (field.toLowerCase().includes('quantity')) {
+            row[field] = 1;
+          } else {
+            row[field] = "Unknown";
+          }
+        }
+      }
+    }
+
+    // Select required fields
+    const resultData = data.map(row => {
+      const newRow = {};
+      for (const field of requiredFields) {
+        if (field in row) {
+          newRow[field] = row[field];
+        } else {
+          newRow[field] = null;
+        }
+      }
+      return newRow;
+    });
+
+    // Convert date columns
+    // const dateColumns = {
+    //   "customers": ["birth_date", "registration_date"],
+    //   "transactions": ["transaction_date"],
+    //   "stores": ["opening_date"],
+    //   "product_lines": []
+    // };
+
+    // for (const dateCol of dateColumns[tableName] || []) {
+    //   for (const row of resultData) {
+    //     if (row[dateCol]) {
+    //       row[dateCol] = new Date(row[dateCol]);
+    //     }
+    //   }
+    // }
+
+    return resultData;
   } catch (error) {
     logger.error(`Error in data validation and mapping: ${error.message}`);
     throw new Error(`Data validation failed: ${error.message}`);
   }
-};
+}
 
 const getTables = async (req, res) => {
-  try {
-    const tables = {
-      "Customer Profile": {
-        name: "customers",
-        fields: SCHEMA_MAPPINGS.customers.required_fields,
-        description: "Customer information"
-      },
-      "Transactions": {
-        name: "transactions",
-        fields: SCHEMA_MAPPINGS.transactions.required_fields,
-        description: "Transaction records"
-      },
-      "Stores": {
-        name: "stores",
-        fields: SCHEMA_MAPPINGS.stores.required_fields,
-        description: "Store information"
-      },
-      "Product Line": {
-        name: "product_lines",
-        fields: SCHEMA_MAPPINGS.product_lines.required_fields,
-        description: "Product information"
-      }
-    };
-
-    console.log('now getting tables');
-    res.json(tables);
-  } catch (error) {
-    logger.error(`Error getting tables: ${error.message}`);
-    res.status(500).json({ error: error.message });
+  const pool = await getAllTable()
+  if (pool) {
+    res.status(200).json({
+      message: 'Get all table successful',
+      data: pool
+    })
+  } else {
+    res.status(400).json({
+      message: 'Get all table fail',
+      data: pool
+    })
   }
-};
+}
 
 const executeQuery = async (req, res) => {
   const { table, query, connection_details } = req.body;
-  logger.info(`Executing query for table: ${table}`);
+  //console.log(`Executing query for table: ${table}`);
 
   let pool = null;
 
   try {
-    // Step 1: Create connection to source database
     pool = await createSourceConnection(connection_details);
 
-    // Step 2: Execute query on source database
-    logger.info(`Executing query on source database: ${query}`);
+    //console.log(`Executing query on source database: ${query}`);
     const result = await pool.query(query);
 
     // Convert to array of objects
     const rows = result.rows;
     const columns = result.fields.map(field => field.name);
 
-    logger.info(`Query returned ${rows.length} rows from source database`);
+    //console.log(`Query returned ${rows.length} rows from source database`);
 
     if (rows.length === 0) {
       return res.json({
@@ -156,14 +161,14 @@ const executeQuery = async (req, res) => {
 
     // Step 3: Map data to standard schema
     const mappedData = validateAndMapData(rows, table);
-    logger.info("Data mapped to standard schema");
+    //console.log("Data mapped to standard schema");
 
     // Step 4: Convert to JSON-serializable records
     const records = convertToJsonSerializable(mappedData);
 
     // Step 5: Insert into Supabase
     const supabase = getSupabase();
-    logger.info(`Inserting ${records.length} records into Supabase`);
+    console.log(`Inserting ${records.length} records into Supabase`);
 
     let insertedCount = 0;
     try {
@@ -190,7 +195,7 @@ const executeQuery = async (req, res) => {
       inserted_count: insertedCount
     };
 
-    logger.info(`Successfully processed ${response.row_count} rows and inserted ${insertedCount} rows`);
+    console.log(`Successfully processed ${response.row_count} rows and inserted ${insertedCount} rows`);
     res.json(response);
 
   } catch (error) {
@@ -210,7 +215,7 @@ const uploadFile = async (req, res) => {
   const file = req.file;
 
   try {
-    logger.info(`Received file upload request for table: ${table_name}`);
+    console.log(`Received file upload request for table: ${table_name}`);
 
     let data;
     if (file.originalname.endsWith('.csv')) {

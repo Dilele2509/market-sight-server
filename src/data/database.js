@@ -1,7 +1,35 @@
 import { createClient } from '@supabase/supabase-js';
+import { supabase } from '../../config.js';
 import pkg from 'pg';
 const { Pool } = pkg;
 import winston from 'winston';
+
+
+const getAllTable = async () => {
+  const { data, error } = await supabase
+    .from('table_schema_view') // ← từ view bạn vừa tạo
+    .select('table_name, column_name, data_type')
+    .order('table_name', { ascending: true });
+
+  if (error) {
+    console.error('Error:', error);
+    return null;
+  }
+
+  const result = {};
+  data.forEach(row => {
+    const { table_name, column_name, data_type } = row;
+    if (!result[table_name]) {
+      result[table_name] = {};
+    }
+    result[table_name][column_name] = data_type;
+  });
+
+  //console.log('result get tables: ', result);
+
+  return result;
+};
+
 
 // Create sensitive filter format
 const sensitiveFilter = winston.format((info) => {
@@ -137,4 +165,4 @@ const getSupabase = () => {
   }
 };
 
-export { logger, testDatabaseConnection, getSupabase, createSourceConnection }; 
+export { logger, getAllTable, testDatabaseConnection, getSupabase, createSourceConnection }; 
