@@ -1,11 +1,10 @@
 import { createSourceConnection, getAllTable, getSupabase, logger, testDatabaseConnection } from '../data/database.js';
 import pkg from 'pg';
 const { Pool } = pkg;
-import multer from 'multer';
 import { parse } from 'csv-parse';
 import xlsx from 'xlsx';
-import crypto from 'crypto';
 import { SCHEMA_MAPPINGS } from '../services/schemaMapping.js';
+import { v4 as uuidv4 } from 'uuid';
 
 // Helper function to convert data to JSON-serializable format
 const convertToJsonSerializable = (obj) => {
@@ -132,154 +131,6 @@ const getTables = async (req, res) => {
   }
 }
 
-const executeQuery = async (req, res) => {
-  const { table, query, connection_details } = req.body;
-  //console.log(`Executing query for table: ${table}`);
-
-  let pool = null;
-
-  try {
-    pool = await createSourceConnection(connection_details);
-
-    //console.log(`Executing query on source database: ${query}`);
-    const result = await pool.query(query);
-
-    // Convert to array of objects
-    const rows = result.rows;
-    const columns = result.fields.map(field => field.name);
-
-    //console.log(`Query returned ${rows.length} rows from source database`);
-
-    if (rows.length === 0) {
-      return res.json({
-        success: true,
-        data: [],
-        row_count: 0,
-        columns: []
-      });
-    }
-
-    // Step 3: Map data to standard schema
-    const mappedData = validateAndMapData(rows, table);
-    //console.log("Data mapped to standard schema");
-
-    // Step 4: Convert to JSON-serializable records
-    const records = convertToJsonSerializable(mappedData);
-
-    // Step 5: Insert into Supabase
-    const supabase = getSupabase();
-    console.log(`Inserting ${records.length} records into Supabase`);
-
-    let insertedCount = 0;
-    try {
-      // Try to insert data
-      const { data, error } = await supabase
-        .from(table)
-        .insert(records);
-
-      if (error) throw error;
-
-      insertedCount = data ? data.length : 0;
-    } catch (error) {
-      logger.warn(`Insert failed: ${error.message}`);
-    }
-
-    // Step 6: Prepare response data
-    const data = convertToJsonSerializable(rows);
-
-    const response = {
-      success: true,
-      data: data,
-      row_count: rows.length,
-      columns: columns,
-      inserted_count: insertedCount
-    };
-
-    console.log(`Successfully processed ${response.row_count} rows and inserted ${insertedCount} rows`);
-    res.json(response);
-
-  } catch (error) {
-    logger.error(`Error in query execution: ${error.message}`);
-    res.status(400).json({
-      detail: `Error executing query: ${error.message}`
-    });
-  } finally {
-    if (pool) {
-      await pool.end();
-    }
-  }
-};
-
-const uploadFile = async (req, res) => {
-  const { table_name } = req.params;
-  const file = req.file;
-
-  try {
-    console.log(`Received file upload request for table: ${table_name}`);
-
-    let data;
-    if (file.originalname.endsWith('.csv')) {
-      data = await new Promise((resolve, reject) => {
-        const results = [];
-        file.buffer
-          .toString()
-          .pipe(parse({ columns: true }))
-          .on('data', (data) => results.push(data))
-          .on('end', () => resolve(results))
-          .on('error', reject);
-      });
-    } else if (file.originalname.match(/\.(xlsx|xls)$/)) {
-      const workbook = xlsx.read(file.buffer);
-      const sheetName = workbook.SheetNames[0];
-      data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
-    } else {
-      throw new Error("Unsupported file format. Please upload CSV or Excel files.");
-    }
-
-    logger.info(`File read successfully. Found ${data.length} rows`);
-
-    // Map data to standard schema
-    const mappedData = validateAndMapData(data, table_name);
-
-    // Insert into Supabase
-    const supabase = getSupabase();
-    logger.info(`Inserting ${mappedData.length} records into Supabase`);
-
-    let insertedCount = 0;
-    try {
-      // Insert records one by one to better handle errors
-      for (const record of mappedData) {
-        const { data: insertResponse, error } = await supabase
-          .from(table_name)
-          .upsert(record, {
-            onConflict: 'customer_id',
-            ignoreDuplicates: false
-          });
-
-        if (error) {
-          logger.warn(`Failed to insert record: ${error.message}`);
-          continue;
-        }
-        if (insertResponse) {
-          insertedCount++;
-        }
-      }
-    } catch (error) {
-      logger.warn(`Insert failed: ${error.message}`);
-    }
-
-    res.json({
-      success: true,
-      message: `Successfully processed ${mappedData.length} rows and inserted ${insertedCount} rows`,
-      rows_processed: mappedData.length,
-      rows_inserted: insertedCount
-    });
-
-  } catch (error) {
-    logger.error(`Error processing file: ${error.message}`);
-    res.status(400).json({ error: error.message });
-  }
-};
 
 const testConnection = async (req, res) => {
   const { connection_url } = req.body;
@@ -532,8 +383,168 @@ const automateDataMapping = async (req, res) => {
   }
 };
 
+// Helper function to validate UUID
+function isValidUUID(uuid) {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(uuid);
+}
+
+const executeQuery = async (req, res) => {
+  const { table, query, connection_details } = req.body;
+  const user = req.user;
+
+  if (!user || !user.user_id) {
+    return res.status(400).json({
+      success: false,
+      error: "User authentication required",
+      detail: "No user_id found in user session"
+    });
+  }
+
+  try {
+    const supabase = getSupabase();
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('business_id')
+      .eq('user_id', user.user_id)
+      .single();
+
+    if (userError) {
+      throw new Error(`Failed to get user's business_id: ${userError.message}`);
+    }
+
+    if (!userData || !userData.business_id) {
+      return res.status(400).json({
+        success: false,
+        error: "Business ID not found",
+        detail: "User does not have an associated business_id"
+      });
+    }
+
+    const business_id = userData.business_id;
+    let pool = null;
+
+    try {
+      pool = await createSourceConnection(connection_details);
+      const result = await pool.query(query);
+      const rows = result.rows;
+      const columns = result.fields.map(field => field.name);
+
+      if (rows.length === 0) {
+        return res.json({
+          success: true,
+          data: [],
+          row_count: 0,
+          columns: []
+        });
+      }
+
+      const mappedData = validateAndMapData(rows, table);
+      const records = mappedData.map(record => ({
+        ...record,
+        customer_id: record.customer_id && isValidUUID(record.customer_id) 
+          ? record.customer_id 
+          : uuidv4(),
+        business_id: business_id
+      }));
+
+      let insertedCount = 0;
+      let updatedCount = 0;
+
+      const tableUniqueFields = {
+        'customers': ['email', 'phone'],
+        'product_lines': ['name', 'brand'],
+        'stores': ['store_name', 'address']
+      };
+
+      const uniqueFields = tableUniqueFields[table] || [];
+      
+      if (uniqueFields.length > 0) {
+        for (const record of records) {
+          try {
+            const conditions = {};
+            let hasValidFields = false;
+
+            uniqueFields.forEach(field => {
+              if (record[field]) {
+                conditions[field] = record[field];
+                hasValidFields = true;
+              }
+            });
+
+            if (!hasValidFields) continue;
+
+            const { data: existingRecords, error: checkError } = await supabase
+              .from(table)
+              .select('*')
+              .match(conditions);
+
+            if (checkError) continue;
+
+            if (existingRecords && existingRecords.length > 0) {
+              const existingRecord = existingRecords[0];
+              const idField = table.slice(0, -1) + '_id';
+              const existingId = existingRecord[idField];
+
+              const { error: updateError } = await supabase
+                .from(table)
+                .update(record)
+                .eq(idField, existingId);
+
+              if (!updateError) updatedCount++;
+            } else {
+              const { error: insertError } = await supabase
+                .from(table)
+                .insert(record);
+
+              if (!insertError) insertedCount++;
+            }
+          } catch (error) {
+            logger.error(`Error processing record: ${error.message}`);
+            continue;
+          }
+        }
+      } else {
+        const { error } = await supabase
+          .from(table)
+          .insert(records);
+
+        if (error) throw error;
+        insertedCount = records.length;
+      }
+
+      const response = {
+        success: true,
+        data: convertToJsonSerializable(rows),
+        row_count: rows.length,
+        columns: columns,
+        inserted_count: insertedCount,
+        updated_count: updatedCount,
+        business_id: business_id
+      };
+
+      res.json(response);
+
+    } catch (error) {
+      logger.error(`Error in query execution: ${error.message}`);
+      res.status(400).json({
+        detail: `Error executing query: ${error.message}`
+      });
+    } finally {
+      if (pool) await pool.end();
+    }
+
+  } catch (error) {
+    logger.error(`Error processing request: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      error: error.message,
+      detail: "Failed to process request"
+    });
+  }
+};
+
 export {
-  uploadFile,
   getTables,
   executeQuery,
   testConnection,
