@@ -6,7 +6,8 @@ import {
   // uploadFile, 
   testConnection, 
   getPostgresTables,
-  automateDataMapping 
+  automateDataMapping, 
+  getRelated
 } from '../controllers/dataController.js';
 import { authenticationToken } from '../controllers/authController.js';
 
@@ -21,7 +22,8 @@ const router = express.Router();
 // });
 
 // Routes
-router.get('/data/tables',authenticationToken, getTables);
+router.get('/data/tables', getTables);
+router.post('/data/related-tables', getRelated);
 router.post('/data/query',authenticationToken, executeQuery);
 // router.post('/data/upload/:table_name',authenticationToken, upload.single('file'), uploadFile);
 router.post('/data/test-connection',authenticationToken, testConnection);

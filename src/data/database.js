@@ -5,10 +5,41 @@ const { Pool } = pkg;
 import winston from 'winston';
 
 
+// const getAllTable = async () => {
+//   const { data, error } = await supabase
+//     .from('table_schema_view') // ← từ view bạn vừa tạo
+//     .select('table_name, column_name, data_type')
+//     .order('table_name', { ascending: true });
+
+//   if (error) {
+//     console.error('Error:', error);
+//     return null;
+//   }
+
+//   const result = {};
+//   data.forEach(row => {
+//     const { table_name, column_name, data_type } = row;
+//     if (!result[table_name]) {
+//       result[table_name] = {};
+//     }
+//     result[table_name][column_name] = data_type;
+//   });
+
+//   //console.log('result get tables: ', result);
+
+//   return result;
+// };
+
+
+// Create sensitive filter format
+
 const getAllTable = async () => {
+  const allowedTables = ['customers', 'product_lines', 'stores', 'transactions'];
+
   const { data, error } = await supabase
-    .from('table_schema_view') // ← từ view bạn vừa tạo
+    .from('table_schema_view')
     .select('table_name, column_name, data_type')
+    .in('table_name', allowedTables) // ← lọc theo danh sách tên bảng
     .order('table_name', { ascending: true });
 
   if (error) {
@@ -25,13 +56,23 @@ const getAllTable = async () => {
     result[table_name][column_name] = data_type;
   });
 
-  //console.log('result get tables: ', result);
-
   return result;
 };
 
+const getRelatedTables = async (target_table) => {
+  const { data, error } = await supabase
+    .rpc('get_related_tables', { target_table: target_table });
 
-// Create sensitive filter format
+  if (error) {
+    console.error('RPC Error:', error);
+    return null
+  }
+  else {
+    //console.log('Related Tables:', data.map(d => d.related_table)); 
+    return data.map(d => d.related_table);
+  }
+};
+
 const sensitiveFilter = winston.format((info) => {
   if (typeof info.message === 'string') {
     // Mask PostgreSQL connection URLs in logs
@@ -165,4 +206,4 @@ const getSupabase = () => {
   }
 };
 
-export { logger, getAllTable, testDatabaseConnection, getSupabase, createSourceConnection }; 
+export { logger, getAllTable, testDatabaseConnection, getSupabase, createSourceConnection, getRelatedTables }; 

@@ -1,4 +1,4 @@
-import { createSourceConnection, getAllTable, getSupabase, logger, testDatabaseConnection } from '../data/database.js';
+import { createSourceConnection, getAllTable, getRelatedTables, getSupabase, logger, testDatabaseConnection } from '../data/database.js';
 import pkg from 'pg';
 const { Pool } = pkg;
 import { parse } from 'csv-parse';
@@ -128,6 +128,29 @@ const getTables = async (req, res) => {
       message: 'Get all table fail',
       data: pool
     })
+  }
+}
+
+const getRelated = async (req, res) => {
+  try {
+    const { tableName } = req.body;
+    const pool = await getRelatedTables(tableName);
+    if (pool) {
+      res.status(200).json({
+        message: 'Get all related tables successful',
+        data: pool
+      })
+    } else {
+      res.status(400).json({
+        message: 'Get all related tables fail',
+        data: pool
+      })
+    }
+  } catch (error) {
+    logger.error('Error when getting related tables:', error);
+    return res.status(400).json({
+      detail: `Error when getting related tables: ${error.message}`
+    });
   }
 }
 
@@ -442,8 +465,8 @@ const executeQuery = async (req, res) => {
       const mappedData = validateAndMapData(rows, table);
       const records = mappedData.map(record => ({
         ...record,
-        customer_id: record.customer_id && isValidUUID(record.customer_id) 
-          ? record.customer_id 
+        customer_id: record.customer_id && isValidUUID(record.customer_id)
+          ? record.customer_id
           : uuidv4(),
         business_id: business_id
       }));
@@ -458,7 +481,7 @@ const executeQuery = async (req, res) => {
       };
 
       const uniqueFields = tableUniqueFields[table] || [];
-      
+
       if (uniqueFields.length > 0) {
         for (const record of records) {
           try {
@@ -546,6 +569,7 @@ const executeQuery = async (req, res) => {
 
 export {
   getTables,
+  getRelated,
   executeQuery,
   testConnection,
   getPostgresTables,
