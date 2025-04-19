@@ -1,8 +1,6 @@
 import { createSourceConnection, getAllTable, getRelatedTables, getSupabase, logger, testDatabaseConnection } from '../data/database.js';
 import pkg from 'pg';
 const { Pool } = pkg;
-import { parse } from 'csv-parse';
-import xlsx from 'xlsx';
 import { SCHEMA_MAPPINGS } from '../services/schemaMapping.js';
 import { v4 as uuidv4 } from 'uuid';
 

@@ -4,6 +4,7 @@ import express from 'express';
 import userRoutes from './src/routes/userRoutes.js';
 import dataRoutes from './src/routes/dataRoutes.js';
 import segmentRoutes from './src/routes/segmentRoutes.js';
+import customerLifecycleRoutes from './src/routes/customerLifecycleRoutes.js';
 import cors from 'cors';
 
 dotenv.config();
@@ -26,6 +27,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/', userRoutes);
 app.use('/api/', dataRoutes);
 app.use('/api/', segmentRoutes);
+app.use('/api/', customerLifecycleRoutes);
+
 
 // Error handling middleware
 app.use((err, req, res, next) => {
