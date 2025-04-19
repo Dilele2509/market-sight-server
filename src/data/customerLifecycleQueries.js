@@ -1,37 +1,5 @@
 export const getNewCustomersMetricsQuery = `
-  WITH first_purchases AS (
-    SELECT 
-      t.customer_id,
-      MIN(t.transaction_date) as first_purchase_date,
-      t.total_amount as first_purchase_amount
-    FROM transactions t
-    WHERE t.business_id = ($1)::integer
-    GROUP BY t.customer_id, t.total_amount
-  )
-  SELECT 
-    COUNT(DISTINCT c.customer_id) as customer_count,
-    SUM(fp.first_purchase_amount) as first_purchase_gmv,
-    AVG(fp.first_purchase_amount) as avg_first_purchase_value,
-    COUNT(DISTINCT CASE WHEN repeat_purchase.customer_id IS NOT NULL THEN c.customer_id END)::float / 
-    COUNT(DISTINCT c.customer_id) as conversion_to_second_purchase_rate,
-    COUNT(DISTINCT t.transaction_id) as orders,
-    AVG(t.total_amount) as aov,
-    SUM(t.total_amount) / COUNT(DISTINCT c.customer_id) as arpu,
-    COUNT(DISTINCT t.transaction_id) / 
-    (EXTRACT(EPOCH FROM (MAX(t.transaction_date) - MIN(t.transaction_date)))/86400) as orders_per_day
-  FROM customers c
-  JOIN first_purchases fp ON c.customer_id = fp.customer_id
-  JOIN transactions t ON c.customer_id = t.customer_id
-  LEFT JOIN (
-    SELECT customer_id 
-    FROM transactions 
-    GROUP BY customer_id 
-    HAVING COUNT(*) > 1
-  ) repeat_purchase ON c.customer_id = repeat_purchase.customer_id
-  WHERE c.business_id = ($1)::integer
-    AND t.transaction_date >= ($2)::timestamp
-    AND t.transaction_date <= ($3)::timestamp
-    AND t.transaction_date = fp.first_purchase_date
+  SELECT * FROM get_new_customers_metrics($1);
 `;
 
 export const getEarlyLifeCustomersMetricsQuery = `

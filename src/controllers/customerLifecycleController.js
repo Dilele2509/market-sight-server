@@ -10,15 +10,99 @@ import {
   updateBusinessIdsQuery
 } from '../data/customerLifecycleQueries.js';
 
-// Main controller function for customer lifecycle analysis
-const getCustomerLifecycleMetrics = async (req, res) => {
+// Helper functions for each customer segment
+const getNewCustomersMetrics = async (req, res) => {
+  const user = req.user;
+
+  logger.info('Starting new customers metrics analysis', {
+    user_id: user?.user_id
+  });
+
+  if (!user || !user.user_id) {
+    logger.warn('User authentication missing', { user });
+    return res.status(400).json({
+      success: false,
+      error: "User authentication required"
+    });
+  }
+
+  try {
+    const supabase = getSupabase();
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('business_id')
+      .eq('user_id', user.user_id)
+      .single();
+
+    if (userError || !userData?.business_id) {
+      logger.error('Error retrieving business_id', {
+        error: userError?.message,
+        user_id: user.user_id
+      });
+      return res.status(400).json({
+        success: false,
+        error: "Business ID not found"
+      });
+    }
 
 
+
+    // Get metrics for last 30 days using the RPC function
+    const { data, error } = await supabase.rpc('get_new_customers_metrics', {
+      p_business_id: Number(userData.business_id)
+    });
+
+    if (error) {
+      logger.error('Error in get_new_customers_metrics RPC:', {
+        error: error.message,
+        business_id: userData.business_id
+      });
+      throw error;
+    }
+
+
+    // Process the data - expecting a single row with all metrics
+    const metrics = Array.isArray(data) && data.length > 0 ? data[0] : {};
+
+    // Log the processed metrics
+    logger.info('Processed metrics:', {
+      metrics,
+      customer_count: metrics.customer_count,
+      first_purchase_gmv: metrics.first_purchase_gmv,
+      avg_first_purchase_value: metrics.avg_first_purchase_value,
+      conversion_to_second_purchase_rate: metrics.conversion_to_second_purchase_rate
+    });
+
+    // Return the metrics object with all fields
+    const response = {
+      customer_count: metrics.customer_count || 0,
+      first_purchase_gmv: metrics.first_purchase_gmv || 0,
+      avg_first_purchase_value: metrics.avg_first_purchase_value || 0,
+      conversion_to_second_purchase_rate: metrics.conversion_to_second_purchase_rate || 0
+    };
+
+    res.json({
+      success: true,
+      data: response
+    });
+  } catch (error) {
+    logger.error('Error in new customers metrics analysis', {
+      error: error.message,
+      stack: error.stack,
+      user_id: user?.user_id
+    });
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+const getEarlyLifeCustomersMetrics = async (req, res) => {
   const { start_date, end_date } = req.body;
   const user = req.user;
-  let userData;
 
-  logger.info('Starting customer lifecycle metrics analysis', {
+  logger.info('Starting early life customers metrics analysis', {
     user_id: user?.user_id,
     request_body: req.body
   });
@@ -31,7 +115,6 @@ const getCustomerLifecycleMetrics = async (req, res) => {
     });
   }
 
-  // Validate date parameters
   if (!start_date || !end_date) {
     logger.warn('Missing date parameters', { 
       start_date, 
@@ -40,153 +123,69 @@ const getCustomerLifecycleMetrics = async (req, res) => {
     });
     return res.status(400).json({
       success: false,
-      error: "Both start_date and end_date are required",
-      detail: "Please provide start_date and end_date in the request body"
+      error: "Both start_date and end_date are required"
     });
   }
 
   try {
     const supabase = getSupabase();
-    logger.info('Retrieving business_id for user', { user_id: user.user_id });
-
-    // Get user's business_id first
-    const { data, error: userError } = await supabase
+    const { data: userData, error: userError } = await supabase
       .from('users')
       .select('business_id')
       .eq('user_id', user.user_id)
       .single();
 
-    if (userError) {
+    if (userError || !userData?.business_id) {
       logger.error('Error retrieving business_id', {
-        error: userError.message,
+        error: userError?.message,
         user_id: user.user_id
-      });
-      throw new Error(`Failed to get user's business_id: ${userError.message}`);
-    }
-
-    userData = data;
-
-    if (!userData || !userData.business_id) {
-      logger.warn('No business_id found for user', {
-        user_id: user.user_id,
-        userData
       });
       return res.status(400).json({
         success: false,
-        error: "Business ID not found",
-        detail: "User does not have an associated business_id"
+        error: "Business ID not found"
       });
     }
 
-    const business_id = userData.business_id;
-    logger.info('Successfully retrieved business_id', { 
-      business_id,
-      user_id: user.user_id 
+    const { data, error } = await supabase.rpc('execute_sql', {
+      params: [Number(userData.business_id), new Date(start_date).toISOString(), new Date(end_date).toISOString()],
+      sql: getEarlyLifeCustomersMetricsQuery
     });
 
-
-    const [
-      newCustomers,
-      earlyLifeCustomers,
-      matureCustomers,
-      loyalCustomers
-    ] = await Promise.all([
-      getNewCustomersMetrics(supabase, start_date, end_date, business_id),
-      getEarlyLifeCustomersMetrics(supabase, start_date, end_date, business_id),
-      getMatureCustomersMetrics(supabase, start_date, end_date, business_id),
-      getLoyalCustomersMetrics(supabase, start_date, end_date, business_id)
-    ]);
-
-    // Check for errors in any of the queries
-    const errors = [
-      newCustomers.error,
-      earlyLifeCustomers.error,
-      matureCustomers.error,
-      loyalCustomers.error
-    ].filter(Boolean);
-
-    if (errors.length > 0) {
-      logger.error('Errors in metrics queries', {
-        business_id,
-        start_date,
-        end_date,
-        errors: errors.map(e => e.message)
+    if (error) {
+      logger.error('Error in execute_sql RPC:', {
+        error: error.message,
       });
-      throw new Error(`Errors in metrics queries: ${errors.map(e => e.message).join(', ')}`);
+      throw error;
     }
 
-    logger.info('Successfully retrieved all customer metrics', {
-      business_id,
-      start_date,
-      end_date,
-      new_customers_count: newCustomers.data?.[0]?.customer_count,
-      early_life_customers_count: earlyLifeCustomers.data?.[0]?.customer_count,
-      mature_customers_count: matureCustomers.data?.[0]?.customer_count,
-      loyal_customers_count: loyalCustomers.data?.[0]?.customer_count
-    });
-
+    // Process and return the metrics
+    const metrics = data?.[0] || {};
     const response = {
-      success: true,
-      data: {
-        new_customers: newCustomers.data?.[0] || {},
-        early_life_customers: earlyLifeCustomers.data?.[0] || {},
-        mature_customers: matureCustomers.data?.[0] || {},
-        loyal_customers: loyalCustomers.data?.[0] || {}
-      }
+      customer_count: metrics.customer_count || 0,
+      repeat_purchase_rate: metrics.repeat_purchase_rate || 0,
+      avg_time_between_purchases: metrics.avg_time_between_purchases || 0,
+      avg_order_value: metrics.avg_order_value || 0,
+      orders: metrics.orders || 0,
+      aov: metrics.aov || 0,
+      arpu: metrics.arpu || 0,
+      orders_per_day: metrics.orders_per_day || 0
     };
 
-    res.json(response);
+    res.json({
+      success: true,
+      data: response
+    });
   } catch (error) {
-    logger.error('Error in customer lifecycle analysis', {
+    logger.error('Error in early life customers metrics analysis', {
       error: error.message,
       stack: error.stack,
-      user_id: user?.user_id,
-      business_id: userData?.business_id,
-      start_date,
-      end_date
+      user_id: user?.user_id
     });
     res.status(400).json({
       success: false,
       error: error.message
     });
   }
-};
-
-// Helper functions for each customer segment
-const getNewCustomersMetrics = async (supabase, start_date, end_date, business_id) => {
-  const { data, error } = await supabase.rpc('execute_sql', {
-    params: [Number(business_id), new Date(start_date).toISOString(), new Date(end_date).toISOString()],
-    sql: getNewCustomersMetricsQuery
-  });
-
-  if (error) {
-    logger.error('Error in execute_sql RPC:', {
-      error: error.message,
-      params: [Number(business_id), new Date(start_date).toISOString(), new Date(end_date).toISOString()],
-      sql: getNewCustomersMetricsQuery
-    });
-    throw error;
-  }
-
-  return data?.[0] || {};
-};
-
-const getEarlyLifeCustomersMetrics = async (supabase, start_date, end_date, business_id) => {
-  const { data, error } = await supabase.rpc('execute_sql', {
-    params: [Number(business_id), new Date(start_date).toISOString(), new Date(end_date).toISOString()],
-    sql: getEarlyLifeCustomersMetricsQuery
-  });
-
-  if (error) {
-    logger.error('Error in execute_sql RPC:', {
-      error: error.message,
-      params: [Number(business_id), new Date(start_date).toISOString(), new Date(end_date).toISOString()],
-      sql: getEarlyLifeCustomersMetricsQuery
-    });
-    throw error;
-  }
-
-  return data?.[0] || {};
 };
 
 const getMatureCustomersMetrics = async (supabase, start_date, end_date, business_id) => {
@@ -198,8 +197,6 @@ const getMatureCustomersMetrics = async (supabase, start_date, end_date, busines
   if (error) {
     logger.error('Error in execute_sql RPC:', {
       error: error.message,
-      params: [Number(business_id), new Date(start_date).toISOString(), new Date(end_date).toISOString()],
-      sql: getMatureCustomersMetricsQuery
     });
     throw error;
   }
@@ -216,8 +213,6 @@ const getLoyalCustomersMetrics = async (supabase, start_date, end_date, business
   if (error) {
     logger.error('Error in execute_sql RPC:', {
       error: error.message,
-      params: [Number(business_id), new Date(start_date).toISOString(), new Date(end_date).toISOString()],
-      sql: getLoyalCustomersMetricsQuery
     });
     throw error;
   }
@@ -498,9 +493,13 @@ const updateBusinessIds = async (req, res) => {
   }
 };
 
+
 export {
-  getCustomerLifecycleMetrics,
   updateCustomerSegments,
   getCustomerJourney,
-  updateBusinessIds
+  updateBusinessIds,
+  getNewCustomersMetrics,
+  getEarlyLifeCustomersMetrics,
+  getMatureCustomersMetrics,
+  getLoyalCustomersMetrics
 };
