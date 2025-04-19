@@ -1,7 +1,6 @@
 import { getSupabase } from '../data/database.js';
 import { logger } from '../data/database.js';
 import {
-  getNewCustomersMetricsQuery,
   getEarlyLifeCustomersMetricsQuery,
   getMatureCustomersMetricsQuery,
   getLoyalCustomersMetricsQuery,
@@ -45,8 +44,6 @@ const getNewCustomersMetrics = async (req, res) => {
       });
     }
 
-
-
     // Get metrics for last 30 days using the RPC function
     const { data, error } = await supabase.rpc('get_new_customers_metrics', {
       p_business_id: Number(userData.business_id)
@@ -60,18 +57,8 @@ const getNewCustomersMetrics = async (req, res) => {
       throw error;
     }
 
-
     // Process the data - expecting a single row with all metrics
     const metrics = Array.isArray(data) && data.length > 0 ? data[0] : {};
-
-    // Log the processed metrics
-    logger.info('Processed metrics:', {
-      metrics,
-      customer_count: metrics.customer_count,
-      first_purchase_gmv: metrics.first_purchase_gmv,
-      avg_first_purchase_value: metrics.avg_first_purchase_value,
-      conversion_to_second_purchase_rate: metrics.conversion_to_second_purchase_rate
-    });
 
     // Return the metrics object with all fields
     const response = {
@@ -99,12 +86,10 @@ const getNewCustomersMetrics = async (req, res) => {
 };
 
 const getEarlyLifeCustomersMetrics = async (req, res) => {
-  const { start_date, end_date } = req.body;
   const user = req.user;
 
   logger.info('Starting early life customers metrics analysis', {
-    user_id: user?.user_id,
-    request_body: req.body
+    user_id: user?.user_id
   });
 
   if (!user || !user.user_id) {
@@ -112,18 +97,6 @@ const getEarlyLifeCustomersMetrics = async (req, res) => {
     return res.status(400).json({
       success: false,
       error: "User authentication required"
-    });
-  }
-
-  if (!start_date || !end_date) {
-    logger.warn('Missing date parameters', { 
-      start_date, 
-      end_date,
-      request_body: req.body
-    });
-    return res.status(400).json({
-      success: false,
-      error: "Both start_date and end_date are required"
     });
   }
 
@@ -146,20 +119,23 @@ const getEarlyLifeCustomersMetrics = async (req, res) => {
       });
     }
 
-    const { data, error } = await supabase.rpc('execute_sql', {
-      params: [Number(userData.business_id), new Date(start_date).toISOString(), new Date(end_date).toISOString()],
-      sql: getEarlyLifeCustomersMetricsQuery
+    // Get metrics using the RPC function
+    const { data, error } = await supabase.rpc('get_early_life_customers_metrics', {
+      p_business_id: Number(userData.business_id)
     });
 
     if (error) {
-      logger.error('Error in execute_sql RPC:', {
+      logger.error('Error in get_early_life_customers_metrics RPC:', {
         error: error.message,
+        business_id: userData.business_id
       });
       throw error;
     }
 
-    // Process and return the metrics
-    const metrics = data?.[0] || {};
+    // Process the data - expecting a single row with all metrics
+    const metrics = Array.isArray(data) && data.length > 0 ? data[0] : {};
+
+    // Return the metrics object with all fields
     const response = {
       customer_count: metrics.customer_count || 0,
       repeat_purchase_rate: metrics.repeat_purchase_rate || 0,
@@ -492,7 +468,6 @@ const updateBusinessIds = async (req, res) => {
     });
   }
 };
-
 
 export {
   updateCustomerSegments,
