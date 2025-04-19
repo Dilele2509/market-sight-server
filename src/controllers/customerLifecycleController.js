@@ -164,36 +164,154 @@ const getEarlyLifeCustomersMetrics = async (req, res) => {
   }
 };
 
-const getMatureCustomersMetrics = async (supabase, start_date, end_date, business_id) => {
-  const { data, error } = await supabase.rpc('execute_sql', {
-    params: [Number(business_id), new Date(start_date).toISOString(), new Date(end_date).toISOString()],
-    sql: getMatureCustomersMetricsQuery
+const getMatureCustomersMetrics = async (req, res) => {
+  const user = req.user;
+
+  logger.info('Starting mature customers metrics analysis', {
+    user_id: user?.user_id
   });
 
-  if (error) {
-    logger.error('Error in execute_sql RPC:', {
-      error: error.message,
+  if (!user || !user.user_id) {
+    logger.warn('User authentication missing', { user });
+    return res.status(400).json({
+      success: false,
+      error: "User authentication required"
     });
-    throw error;
   }
 
-  return data?.[0] || {};
+  try {
+    const supabase = getSupabase();
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('business_id')
+      .eq('user_id', user.user_id)
+      .single();
+
+    if (userError || !userData?.business_id) {
+      logger.error('Error retrieving business_id', {
+        error: userError?.message,
+        user_id: user.user_id
+      });
+      return res.status(400).json({
+        success: false,
+        error: "Business ID not found"
+      });
+    }
+
+    // Get metrics using the RPC function
+    const { data, error } = await supabase.rpc('get_mature_customers_metrics', {
+      p_business_id: Number(userData.business_id)
+    });
+
+    if (error) {
+      logger.error('Error in get_mature_customers_metrics RPC:', {
+        error: error.message,
+        business_id: userData.business_id
+      });
+      throw error;
+    }
+
+    // Process the data - expecting a single row with all metrics
+    const metrics = Array.isArray(data) && data.length > 0 ? data[0] : {};
+
+    // Return the metrics object with all fields
+    const response = {
+      customer_count: metrics.customer_count || 0,
+      purchase_frequency: metrics.purchase_frequency || 0,
+      avg_basket_size: metrics.avg_basket_size || 0,
+      monthly_spend: metrics.monthly_spend || 0
+    };
+
+    res.json({
+      success: true,
+      data: response
+    });
+  } catch (error) {
+    logger.error('Error in mature customers metrics analysis', {
+      error: error.message,
+      stack: error.stack,
+      user_id: user?.user_id
+    });
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
 };
 
-const getLoyalCustomersMetrics = async (supabase, start_date, end_date, business_id) => {
-  const { data, error } = await supabase.rpc('execute_sql', {
-    params: [Number(business_id), new Date(start_date).toISOString(), new Date(end_date).toISOString()],
-    sql: getLoyalCustomersMetricsQuery
+const getLoyalCustomersMetrics = async (req, res) => {
+  const user = req.user;
+
+  logger.info('Starting loyal customers metrics analysis', {
+    user_id: user?.user_id
   });
 
-  if (error) {
-    logger.error('Error in execute_sql RPC:', {
-      error: error.message,
+  if (!user || !user.user_id) {
+    logger.warn('User authentication missing', { user });
+    return res.status(400).json({
+      success: false,
+      error: "User authentication required"
     });
-    throw error;
   }
 
-  return data?.[0] || {};
+  try {
+    const supabase = getSupabase();
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('business_id')
+      .eq('user_id', user.user_id)
+      .single();
+
+    if (userError || !userData?.business_id) {
+      logger.error('Error retrieving business_id', {
+        error: userError?.message,
+        user_id: user.user_id
+      });
+      return res.status(400).json({
+        success: false,
+        error: "Business ID not found"
+      });
+    }
+
+    // Get metrics using the RPC function
+    const { data, error } = await supabase.rpc('get_loyal_customers_metrics', {
+      p_business_id: Number(userData.business_id)
+    });
+
+    if (error) {
+      logger.error('Error in get_loyal_customers_metrics RPC:', {
+        error: error.message,
+        business_id: userData.business_id
+      });
+      throw error;
+    }
+
+    // Process the data - expecting a single row with all metrics
+    const metrics = Array.isArray(data) && data.length > 0 ? data[0] : {};
+
+    // Return the metrics object with all fields
+    const response = {
+      customer_count: metrics.customer_count || 0,
+      annual_customer_value: metrics.annual_customer_value || 0,
+      purchase_frequency: metrics.purchase_frequency || 0,
+      category_penetration: metrics.category_penetration || 0
+    };
+
+    res.json({
+      success: true,
+      data: response
+    });
+  } catch (error) {
+    logger.error('Error in loyal customers metrics analysis', {
+      error: error.message,
+      stack: error.stack,
+      user_id: user?.user_id
+    });
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
 };
 
 // Function to update customer segments
