@@ -3,12 +3,12 @@ import {
   getNewCustomersMetrics,
   getEarlyLifeCustomersMetrics,
   getMatureCustomersMetrics,
-  getLoyalCustomersMetrics
+  getLoyalCustomersMetrics,
+  getCustomerLifecycleToplineMetrics
 } from '../controllers/customerLifecycleController.js';
 import { authenticationToken } from '../controllers/authController.js';
 
 const router = express.Router();
-
 
 // Individual Customer Stage Metrics Routes
 router.post('/customer-lifecycle/new-customers', authenticationToken, getNewCustomersMetrics);
@@ -16,6 +16,7 @@ router.post('/customer-lifecycle/early-life-customers', authenticationToken, get
 router.post('/customer-lifecycle/mature-customers', authenticationToken, getMatureCustomersMetrics);
 router.post('/customer-lifecycle/loyal-customers', authenticationToken, getLoyalCustomersMetrics);
 
-
+// Topline Metrics Route
+router.get('/customer-lifecycle/topline-metrics', authenticationToken, getCustomerLifecycleToplineMetrics);
 
 export default router;
