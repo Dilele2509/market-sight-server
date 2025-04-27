@@ -780,11 +780,138 @@ const getCustomerLifecycleToplineMetrics = async (req, res) => {
   }
 };
 
+const getCustomerStagePeriodChanges = async (req, res) => {
+  const user = req.user;
+  const { reference_date, time_range } = req.body;
+
+  logger.info('Starting customer stage period changes analysis', {
+    user_id: user?.user_id,
+    reference_date,
+    time_range
+  });
+
+  if (!user || !user.user_id) {
+    logger.warn('User authentication missing', { user });
+    return res.status(400).json({
+      success: false,
+      error: "User authentication required"
+    });
+  }
+
+  if (!reference_date || !time_range) {
+    logger.warn('Missing required parameters', { reference_date, time_range });
+    return res.status(400).json({
+      success: false,
+      error: "Reference date and time range are required"
+    });
+  }
+
+  try {
+    // Validate date format
+    const referenceDate = new Date(reference_date);
+    if (isNaN(referenceDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid reference_date format. Use YYYY-MM-DD"
+      });
+    }
+
+    // Validate time_range
+    if (![3, 6, 9, 12].includes(Number(time_range))) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid time_range. Must be one of: 3, 6, 9, 12 months"
+      });
+    }
+
+    // Validate reference_date is not in future
+    if (referenceDate > new Date()) {
+      return res.status(400).json({
+        success: false,
+        error: "Reference date cannot be in the future"
+      });
+    }
+
+    const supabase = getSupabase();
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('business_id')
+      .eq('user_id', user.user_id)
+      .single();
+
+    if (userError || !userData?.business_id) {
+      logger.error('Error retrieving business_id', {
+        error: userError?.message,
+        user_id: user.user_id
+      });
+      return res.status(400).json({
+        success: false,
+        error: "Business ID not found"
+      });
+    }
+
+    // Get period changes using the RPC function
+    const { data: periodChanges, error: periodError } = await supabase.rpc('get_customer_stage_period_changes', {
+      p_business_id: Number(userData.business_id),
+      p_reference_date: referenceDate.toISOString().split('T')[0],
+      p_time_range: Number(time_range)
+    });
+
+    if (periodError) {
+      logger.error('Error in get_customer_stage_period_changes RPC:', {
+        error: periodError.message,
+        business_id: userData.business_id,
+        reference_date,
+        time_range
+      });
+      throw periodError;
+    }
+
+    // Format the response
+    const response = {
+      period_changes: periodChanges.map(stage => ({
+        stage: stage.stage,
+        current_period: {
+          count: stage.current_period_count,
+          start_date: stage.current_period_start,
+          end_date: stage.current_period_end
+        },
+        previous_period: {
+          count: stage.previous_period_count,
+          start_date: stage.previous_period_start,
+          end_date: stage.previous_period_end
+        },
+        change_percentage: stage.change_percentage
+      })),
+      time_window: {
+        reference_date,
+        time_range
+      }
+    };
+
+    res.json({
+      success: true,
+      data: response
+    });
+  } catch (error) {
+    logger.error('Error in customer stage period changes analysis', {
+      error: error.message,
+      stack: error.stack,
+      user_id: user?.user_id
+    });
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
 export {
   updateBusinessIds,
   getNewCustomersMetrics,
   getEarlyLifeCustomersMetrics,
   getMatureCustomersMetrics,
   getLoyalCustomersMetrics,
-  getCustomerLifecycleToplineMetrics
+  getCustomerLifecycleToplineMetrics,
+  getCustomerStagePeriodChanges
 };

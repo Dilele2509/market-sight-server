@@ -4,7 +4,8 @@ import {
   getEarlyLifeCustomersMetrics,
   getMatureCustomersMetrics,
   getLoyalCustomersMetrics,
-  getCustomerLifecycleToplineMetrics
+  getCustomerLifecycleToplineMetrics,
+  getCustomerStagePeriodChanges
 } from '../controllers/customerLifecycleController.js';
 import { authenticationToken } from '../controllers/authController.js';
 
@@ -18,5 +19,8 @@ router.post('/customer-lifecycle/loyal-customers', authenticationToken, getLoyal
 
 // Topline Metrics Route
 router.get('/customer-lifecycle/topline-metrics', authenticationToken, getCustomerLifecycleToplineMetrics);
+
+// Customer Stage Period Changes Route
+router.get('/customer-lifecycle/stage-period-changes', authenticationToken, getCustomerStagePeriodChanges);
 
 export default router;
