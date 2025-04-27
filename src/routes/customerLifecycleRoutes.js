@@ -21,4 +21,6 @@ router.post('/customer-lifecycle/early-life-customers', authenticationToken, get
 router.post('/customer-lifecycle/mature-customers', authenticationToken, getMatureCustomersMetrics);
 router.post('/customer-lifecycle/loyal-customers', authenticationToken, getLoyalCustomersMetrics);
 
+
+
 export default router;

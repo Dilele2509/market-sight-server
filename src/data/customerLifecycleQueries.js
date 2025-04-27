@@ -238,3 +238,54 @@ export const updateBusinessIdsQuery = `
     (SELECT COUNT(*) FROM updated_transactions) as transactions_updated,
     (SELECT COUNT(*) FROM updated_product_lines) as product_lines_updated;
 `;
+
+export const getDetailedCustomerStageInfoQuery = `
+  WITH customer_metrics AS (
+    SELECT 
+      c.customer_id,
+      c.first_name,
+      c.last_name,
+      c.email,
+      c.phone,
+      c.customer_segment,
+      c.segment_updated_at,
+      MIN(t.transaction_date) as first_purchase_date,
+      MAX(t.transaction_date) as last_purchase_date,
+      COUNT(DISTINCT t.transaction_id) as total_purchases,
+      SUM(t.total_amount) as total_spent,
+      AVG(t.total_amount) as avg_order_value,
+      COUNT(DISTINCT pl.category) as categories_purchased,
+      STRING_AGG(DISTINCT pl.category, ', ') as purchase_categories,
+      EXTRACT(EPOCH FROM (MAX(t.transaction_date) - MIN(t.transaction_date)))/86400 as days_between_first_last_purchase,
+      AVG(EXTRACT(EPOCH FROM (
+        t.transaction_date - LAG(t.transaction_date) OVER (
+          PARTITION BY c.customer_id ORDER BY t.transaction_date
+        )
+      ))/86400) as avg_days_between_purchases
+    FROM customers c
+    JOIN transactions t ON c.customer_id = t.customer_id
+    LEFT JOIN product_lines pl ON t.product_line_id = pl.product_line_id
+    WHERE c.business_id = $1
+      AND c.customer_segment = $2
+    GROUP BY c.customer_id, c.first_name, c.last_name, c.email, c.phone, c.customer_segment, c.segment_updated_at
+  )
+  SELECT 
+    customer_id,
+    first_name,
+    last_name,
+    email,
+    phone,
+    customer_segment,
+    segment_updated_at,
+    first_purchase_date,
+    last_purchase_date,
+    total_purchases,
+    total_spent,
+    avg_order_value,
+    categories_purchased,
+    purchase_categories,
+    days_between_first_last_purchase,
+    avg_days_between_purchases
+  FROM customer_metrics
+  ORDER BY total_spent DESC;
+`;
