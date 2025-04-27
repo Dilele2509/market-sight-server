@@ -1,12 +1,12 @@
 import { getSupabase } from '../data/database.js';
 import { logger } from '../data/database.js';
 import {
-  updateCustomerSegmentsQuery,
-  getCustomerJourneyQuery,
+
   updateBusinessIdsQuery,
 } from '../data/customerLifecycleQueries.js';
 
-// Helper functions for each customer segment
+// Function to get New customers metrics
+
 const getNewCustomersMetrics = async (req, res) => {
   const user = req.user;
 
@@ -97,6 +97,8 @@ const getNewCustomersMetrics = async (req, res) => {
     });
   }
 };
+
+// Function to get Early life customers metrics 
 
 const getEarlyLifeCustomersMetrics = async (req, res) => {
   const user = req.user;
@@ -193,6 +195,8 @@ const getEarlyLifeCustomersMetrics = async (req, res) => {
   }
 };
 
+// Function to get Mature customers metrics
+
 const getMatureCustomersMetrics = async (req, res) => {
   const user = req.user;
 
@@ -284,6 +288,8 @@ const getMatureCustomersMetrics = async (req, res) => {
   }
 };
 
+// Function to get Loyal customers metrics
+
 const getLoyalCustomersMetrics = async (req, res) => {
   const user = req.user;
 
@@ -364,189 +370,6 @@ const getLoyalCustomersMetrics = async (req, res) => {
     });
   } catch (error) {
     logger.error('Error in loyal customers metrics analysis', {
-      error: error.message,
-      stack: error.stack,
-      user_id: user?.user_id
-    });
-    res.status(400).json({
-      success: false,
-      error: error.message
-    });
-  }
-};
-
-// Function to update customer segments
-const updateCustomerSegments = async (req, res) => {
-  const user = req.user;
-
-  logger.info('Starting customer segments update', { user_id: user?.user_id });
-
-  if (!user || !user.user_id) {
-    logger.warn('User authentication missing', { user });
-    return res.status(400).json({
-      success: false,
-      error: "User authentication required"
-    });
-  }
-
-  try {
-    const supabase = getSupabase();
-    logger.info('Retrieving business_id for user', { user_id: user.user_id });
-
-    // Get user's business_id first
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('business_id')
-      .eq('user_id', user.user_id)
-      .single();
-
-    if (userError) {
-      logger.error('Error retrieving business_id', {
-        error: userError.message,
-        user_id: user.user_id
-      });
-      throw new Error(`Failed to get user's business_id: ${userError.message}`);
-    }
-
-    if (!userData || !userData.business_id) {
-      logger.warn('No business_id found for user', {
-        user_id: user.user_id,
-        userData
-      });
-      return res.status(400).json({
-        success: false,
-        error: "Business ID not found",
-        detail: "User does not have an associated business_id"
-      });
-    }
-
-    const business_id = userData.business_id;
-    logger.info('Successfully retrieved business_id', { business_id });
-
-    // Update segments for all customers
-    logger.info('Updating customer segments', { business_id });
-
-    const { data, error } = await supabase.rpc('execute_sql', {
-      params: { business_id },
-      sql: updateCustomerSegmentsQuery
-    });
-
-    if (error) {
-      logger.error('Error updating customer segments', {
-        error: error.message,
-        business_id
-      });
-      throw error;
-    }
-
-    logger.info('Successfully updated customer segments', {
-      business_id,
-      affected_rows: data?.length || 0
-    });
-
-    res.json({
-      success: true,
-      message: "Customer segments updated successfully",
-      affected_rows: data?.length || 0
-    });
-  } catch (error) {
-    logger.error('Error updating customer segments', {
-      error: error.message,
-      stack: error.stack,
-      user_id: user?.user_id
-    });
-    res.status(400).json({
-      success: false,
-      error: error.message
-    });
-  }
-};
-
-// Function to get customer journey visualization
-const getCustomerJourney = async (req, res) => {
-  const { start_date, end_date } = req.query;
-  const user = req.user;
-
-  logger.info('Starting customer journey analysis', {
-    start_date,
-    end_date,
-    user_id: user?.user_id
-  });
-
-  if (!user || !user.user_id) {
-    logger.warn('User authentication missing', { user });
-    return res.status(400).json({
-      success: false,
-      error: "User authentication required"
-    });
-  }
-
-  try {
-    const supabase = getSupabase();
-    logger.info('Retrieving business_id for user', { user_id: user.user_id });
-
-    // Get user's business_id first
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('business_id')
-      .eq('user_id', user.user_id)
-      .single();
-
-    if (userError) {
-      logger.error('Error retrieving business_id', {
-        error: userError.message,
-        user_id: user.user_id
-      });
-      throw new Error(`Failed to get user's business_id: ${userError.message}`);
-    }
-
-    if (!userData || !userData.business_id) {
-      logger.warn('No business_id found for user', {
-        user_id: user.user_id,
-        userData
-      });
-      return res.status(400).json({
-        success: false,
-        error: "Business ID not found",
-        detail: "User does not have an associated business_id"
-      });
-    }
-
-    const business_id = userData.business_id;
-    logger.info('Successfully retrieved business_id', { business_id });
-
-    logger.info('Fetching customer journey data', {
-      business_id,
-      start_date,
-      end_date
-    });
-
-    const { data, error } = await supabase.rpc('execute_sql', {
-      params: { start_date, end_date, business_id },
-      sql: getCustomerJourneyQuery
-    });
-
-    if (error) {
-      logger.error('Error fetching customer journey data', {
-        error: error.message,
-        business_id,
-        start_date,
-        end_date
-      });
-      throw error;
-    }
-
-    logger.info('Successfully fetched customer journey data', {
-      business_id,
-      data_count: data?.length
-    });
-
-    res.json({
-      success: true,
-      data
-    });
-  } catch (error) {
-    logger.error('Error getting customer journey', {
       error: error.message,
       stack: error.stack,
       user_id: user?.user_id
@@ -648,117 +471,11 @@ const updateBusinessIds = async (req, res) => {
   }
 };
 
-const getDetailedCustomerStageInfo = async (req, res) => {
-  const user = req.user;
-  const { stage } = req.params;
-
-  logger.info('Starting detailed customer stage info analysis', {
-    user_id: user?.user_id,
-    stage
-  });
-
-  if (!user || !user.user_id) {
-    logger.warn('User authentication missing', { user });
-    return res.status(400).json({
-      success: false,
-      error: "User authentication required"
-    });
-  }
-
-  if (!stage) {
-    logger.warn('Stage parameter missing');
-    return res.status(400).json({
-      success: false,
-      error: "Stage parameter is required"
-    });
-  }
-
-  // Map URL parameter to actual customer segment name
-  const stageMapping = {
-    'new-customers': 'New Customer',
-    'early-life-customers': 'Early-life Customer',
-    'mature-customers': 'Mature Customer',
-    'loyal-customers': 'Loyal Customer',
-    'inactive': 'Inactive'
-  };
-
-  const customerSegment = stageMapping[stage];
-  if (!customerSegment) {
-    logger.warn('Invalid stage parameter', { stage });
-    return res.status(400).json({
-      success: false,
-      error: "Invalid stage parameter. Must be one of: new-customers, early-life-customers, mature-customers, loyal-customers, inactive"
-    });
-  }
-
-  try {
-    const supabase = getSupabase();
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('business_id')
-      .eq('user_id', user.user_id)
-      .single();
-
-    if (userError || !userData?.business_id) {
-      logger.error('Error retrieving business_id', {
-        error: userError?.message,
-        user_id: user.user_id
-      });
-      return res.status(400).json({
-        success: false,
-        error: "Business ID not found"
-      });
-    }
-
-    // Get detailed customer information using the PostgreSQL function
-    const { data, error } = await supabase.rpc('get_detailed_customer_stage_info', {
-      p_business_id: userData.business_id,
-      p_customer_segment: customerSegment
-    });
-
-    if (error) {
-      logger.error('Error in get_detailed_customer_stage_info:', {
-        error: error.message,
-        business_id: userData.business_id,
-        stage: customerSegment
-      });
-      throw error;
-    }
-
-    logger.info('Successfully retrieved detailed customer stage info', {
-      business_id: userData.business_id,
-      stage: customerSegment,
-      customer_count: data?.length || 0
-    });
-
-    res.json({
-      success: true,
-      data: {
-        stage: customerSegment,
-        customers: data || []
-      }
-    });
-  } catch (error) {
-    logger.error('Error in detailed customer stage info analysis', {
-      error: error.message,
-      stack: error.stack,
-      user_id: user?.user_id,
-      stage: customerSegment
-    });
-    res.status(400).json({
-      success: false,
-      error: error.message
-    });
-  }
-};
 
 export {
-  updateCustomerSegments,
-  getCustomerJourney,
   updateBusinessIds,
   getNewCustomersMetrics,
   getEarlyLifeCustomersMetrics,
   getMatureCustomersMetrics,
   getLoyalCustomersMetrics,
-  getDetailedCustomerStageInfo
 };
