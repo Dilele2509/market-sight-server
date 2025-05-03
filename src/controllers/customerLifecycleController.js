@@ -77,25 +77,6 @@ const getNewCustomersMetrics = async (req, res) => {
       });
     }
 
-    // Lấy tổng số khách hàng (có thể được tính từ một bảng khác hoặc một phép tính tổng)
-    const { data: totalCustomersData, error: totalCustomersError } = await supabase
-      .from('customers')
-      .select('customer_id')
-      .eq('business_id', userData.business_id);
-
-    if (totalCustomersError || !totalCustomersData) {
-      logger.error('Error retrieving total customers', {
-        error: totalCustomersError?.message,
-        business_id: userData.business_id
-      });
-      return res.status(400).json({
-        success: false,
-        error: "Total customers not found"
-      });
-    }
-
-    const totalCustomersCount = totalCustomersData.length;
-
     // Get metrics using the RPC function with new parameters
     const { data: metricsData, error: metricsError } = await supabase.rpc('get_new_customers_metrics', {
       p_business_id: Number(userData.business_id),
@@ -116,7 +97,7 @@ const getNewCustomersMetrics = async (req, res) => {
     // Get detailed customer information
     const { data: customersData, error: customersError } = await supabase.rpc('get_detailed_new_customers_info', {
       p_business_id: Number(userData.business_id),
-      p_reference_date: reference_date,
+      p_reference_date: referenceDate.toISOString().split('T')[0], // Convert to YYYY-MM-DD
       p_time_range: Number(time_range)
     });
 
@@ -128,28 +109,55 @@ const getNewCustomersMetrics = async (req, res) => {
       throw customersError;
     }
 
-    // Process the metrics data
-    const metrics = Array.isArray(metricsData) && metricsData.length > 0 ? metricsData[0] : {};
+    if (!metricsData || metricsData.length === 0) {
+      logger.warn('No data returned from metrics function', {
+        business_id: userData.business_id,
+        reference_date,
+        time_range
+      });
+      return res.json({
+        success: true,
+        data: {
+          segment: "New Customers",
+          metrics: [],
+          customers: [],
+          time_window: {
+            reference_date,
+            time_range
+          }
+        }
+      });
+    }
 
-    // Tính phần trăm số lượng khách hàng mới trên tổng số khách hàng
-    const customerPercentage = totalCustomersCount > 0 ? (metrics.customer_count / totalCustomersCount) * 100 : 0;
-
-    // Return both metrics and detailed customer information
+    // Format the response with monthly breakdown
     const response = {
       segment: "New Customers",
-      metrics: {
-        customer_count: metrics.customer_count ?? 0,
-        first_purchase_gmv: Number((metrics.first_purchase_gmv ?? 0).toFixed(2)),
-        avg_first_purchase_value: Number((metrics.avg_first_purchase_value ?? 0).toFixed(2)),
-        conversion_to_second_purchase_rate: Number((metrics.conversion_to_second_purchase_rate ?? 0).toFixed(2)),
-        customer_percentage: Number((customerPercentage ?? 0).toFixed(2)),
-      },
+      metrics: metricsData.map(period => ({
+        period: {
+          start_date: period.period_start,
+          end_date: period.period_end
+        },
+        values: {
+          customer_count: Number(period.customer_count || 0),
+          gmv: Number(period.gmv || 0),
+          orders: Number(period.orders || 0),
+          unique_customers: Number(period.unique_customers || 0),
+          aov: Number(period.aov || 0),
+          avg_bill_per_user: Number(period.avg_bill_per_user || 0),
+          arpu: Number(period.arpu || 0),
+          orders_per_day: Number(period.orders_per_day || 0),
+          orders_per_day_per_store: Number(period.orders_per_day_per_store || 0),
+          first_purchase_gmv: Number(period.first_purchase_gmv || 0),
+          avg_first_purchase_value: Number(period.avg_first_purchase_value || 0),
+          conversion_to_second_purchase_rate: Number(period.conversion_to_second_purchase_rate || 0)
+        }
+      })),
       customers: customersData || [],
       time_window: {
         reference_date,
         time_range,
-        start_date: metrics.start_date,
-        end_date: metrics.end_date
+        start_date: metricsData[0]?.period_start,
+        end_date: metricsData[metricsData.length - 1]?.period_end
       }
     };
 
@@ -243,25 +251,6 @@ const getEarlyLifeCustomersMetrics = async (req, res) => {
       });
     }
 
-    // Lấy tổng số khách hàng (có thể được tính từ một bảng khác hoặc một phép tính tổng)
-    const { data: totalCustomersData, error: totalCustomersError } = await supabase
-      .from('customers')
-      .select('customer_id')
-      .eq('business_id', userData.business_id);
-
-    if (totalCustomersError || !totalCustomersData) {
-      logger.error('Error retrieving total customers', {
-        error: totalCustomersError?.message,
-        business_id: userData.business_id
-      });
-      return res.status(400).json({
-        success: false,
-        error: "Total customers not found"
-      });
-    }
-
-    const totalCustomersCount = totalCustomersData.length;
-
     // Get metrics using the RPC function with new parameters
     const { data: metricsData, error: metricsError } = await supabase.rpc('get_early_life_customers_metrics', {
       p_business_id: Number(userData.business_id),
@@ -294,33 +283,55 @@ const getEarlyLifeCustomersMetrics = async (req, res) => {
       throw customersError;
     }
 
-    // Process the metrics data
-    const metrics = Array.isArray(metricsData) && metricsData.length > 0 ? metricsData[0] : {};
+    if (!metricsData || metricsData.length === 0) {
+      logger.warn('No data returned from metrics function', {
+        business_id: userData.business_id,
+        reference_date,
+        time_range
+      });
+      return res.json({
+        success: true,
+        data: {
+          segment: "Early-life Customers",
+          metrics: [],
+          customers: [],
+          time_window: {
+            reference_date,
+            time_range
+          }
+        }
+      });
+    }
 
-    // Tính phần trăm số lượng khách hàng mới trên tổng số khách hàng
-    const customerPercentage = totalCustomersCount > 0 ? (metrics.customer_count / totalCustomersCount) * 100 : 0;
-
-
-    // Return both metrics and detailed customer information
+    // Format the response with monthly breakdown
     const response = {
       segment: "Early-life Customers",
-      metrics: {
-        customer_count: metrics.customer_count ?? 0,
-        repeat_purchase_rate: Number((metrics.repeat_purchase_rate ?? 0).toFixed(2)),
-        avg_time_between_purchases: Number((metrics.avg_time_between_purchases ?? 0).toFixed(2)),
-        avg_order_value: Number((metrics.avg_order_value ?? 0).toFixed(2)),
-        orders: Number((metrics.orders ?? 0).toFixed(2)),
-        aov: Number((metrics.aov ?? 0).toFixed(2)),
-        arpu: Number((metrics.arpu ?? 0).toFixed(2)),
-        orders_per_day: Number((metrics.orders_per_day ?? 0).toFixed(2)),
-        customer_percentage: Number((customerPercentage ?? 0).toFixed(2)),
-      },
+      metrics: metricsData.map(period => ({
+        period: {
+          start_date: period.period_start,
+          end_date: period.period_end
+        },
+        values: {
+          customer_count: Number(period.customer_count || 0),
+          gmv: Number(period.gmv || 0),
+          orders: Number(period.orders || 0),
+          unique_customers: Number(period.unique_customers || 0),
+          aov: Number(period.aov || 0),
+          avg_bill_per_user: Number(period.avg_bill_per_user || 0),
+          arpu: Number(period.arpu || 0),
+          orders_per_day: Number(period.orders_per_day || 0),
+          orders_per_day_per_store: Number(period.orders_per_day_per_store || 0),
+          repeat_purchase_rate: Number(period.repeat_purchase_rate || 0),
+          avg_time_between_purchases: Number(period.avg_time_between_purchases || 0),
+          avg_order_value: Number(period.avg_order_value || 0)
+        }
+      })),
       customers: customersData || [],
       time_window: {
         reference_date,
         time_range,
-        start_date: metrics.start_date,
-        end_date: metrics.end_date
+        start_date: metricsData[0]?.period_start,
+        end_date: metricsData[metricsData.length - 1]?.period_end
       }
     };
 
@@ -414,25 +425,6 @@ const getMatureCustomersMetrics = async (req, res) => {
       });
     }
 
-    // Lấy tổng số khách hàng (có thể được tính từ một bảng khác hoặc một phép tính tổng)
-    const { data: totalCustomersData, error: totalCustomersError } = await supabase
-      .from('customers')
-      .select('customer_id')
-      .eq('business_id', userData.business_id);
-
-    if (totalCustomersError || !totalCustomersData) {
-      logger.error('Error retrieving total customers', {
-        error: totalCustomersError?.message,
-        business_id: userData.business_id
-      });
-      return res.status(400).json({
-        success: false,
-        error: "Total customers not found"
-      });
-    }
-
-    const totalCustomersCount = totalCustomersData.length;
-
     // Get metrics using the RPC function with new parameters
     const { data: metricsData, error: metricsError } = await supabase.rpc('get_mature_customers_metrics', {
       p_business_id: Number(userData.business_id),
@@ -465,28 +457,55 @@ const getMatureCustomersMetrics = async (req, res) => {
       throw customersError;
     }
 
-    // Process the metrics data
-    const metrics = Array.isArray(metricsData) && metricsData.length > 0 ? metricsData[0] : {};
+    if (!metricsData || metricsData.length === 0) {
+      logger.warn('No data returned from metrics function', {
+        business_id: userData.business_id,
+        reference_date,
+        time_range
+      });
+      return res.json({
+        success: true,
+        data: {
+          segment: "Mature Customers",
+          metrics: [],
+          customers: [],
+          time_window: {
+            reference_date,
+            time_range
+          }
+        }
+      });
+    }
 
-    // Tính phần trăm số lượng khách hàng mới trên tổng số khách hàng
-    const customerPercentage = totalCustomersCount > 0 ? (metrics.customer_count / totalCustomersCount) * 100 : 0;
-
-    // Return both metrics and detailed customer information
+    // Format the response with monthly breakdown
     const response = {
       segment: "Mature Customers",
-      metrics: {
-        customer_count: metrics.customer_count ?? 0,
-        purchase_frequency: Number((metrics.purchase_frequency ?? 0).toFixed(2)),
-        avg_basket_size: Number((metrics.avg_basket_size ?? 0).toFixed(2)),
-        monthly_spend: Number((metrics.monthly_spend ?? 0).toFixed(2)),
-        customer_percentage: Number((customerPercentage ?? 0).toFixed(2)),
-      },
+      metrics: metricsData.map(period => ({
+        period: {
+          start_date: period.period_start,
+          end_date: period.period_end
+        },
+        values: {
+          customer_count: Number(period.customer_count || 0),
+          gmv: Number(period.gmv || 0),
+          orders: Number(period.orders || 0),
+          unique_customers: Number(period.unique_customers || 0),
+          aov: Number(period.aov || 0),
+          avg_bill_per_user: Number(period.avg_bill_per_user || 0),
+          arpu: Number(period.arpu || 0),
+          orders_per_day: Number(period.orders_per_day || 0),
+          orders_per_day_per_store: Number(period.orders_per_day_per_store || 0),
+          purchase_frequency: Number(period.purchase_frequency || 0),
+          avg_basket_size: Number(period.avg_basket_size || 0),
+          monthly_spend: Number(period.monthly_spend || 0)
+        }
+      })),
       customers: customersData || [],
       time_window: {
         reference_date,
         time_range,
-        start_date: metrics.start_date,
-        end_date: metrics.end_date
+        start_date: metricsData[0]?.period_start,
+        end_date: metricsData[metricsData.length - 1]?.period_end
       }
     };
 
@@ -580,25 +599,6 @@ const getLoyalCustomersMetrics = async (req, res) => {
       });
     }
 
-    // Lấy tổng số khách hàng (có thể được tính từ một bảng khác hoặc một phép tính tổng)
-    const { data: totalCustomersData, error: totalCustomersError } = await supabase
-      .from('customers')
-      .select('customer_id')
-      .eq('business_id', userData.business_id);
-
-    if (totalCustomersError || !totalCustomersData) {
-      logger.error('Error retrieving total customers', {
-        error: totalCustomersError?.message,
-        business_id: userData.business_id
-      });
-      return res.status(400).json({
-        success: false,
-        error: "Total customers not found"
-      });
-    }
-
-    const totalCustomersCount = totalCustomersData.length;
-
     // Get metrics using the RPC function with new parameters
     const { data: metricsData, error: metricsError } = await supabase.rpc('get_loyal_customers_metrics', {
       p_business_id: Number(userData.business_id),
@@ -607,7 +607,7 @@ const getLoyalCustomersMetrics = async (req, res) => {
     });
 
     if (metricsError) {
-      logger.error('Error in get_loyal_customers_metrics RPC:', {
+      logger.error('Error in get_loyal_customers_metrics_monthly RPC:', {
         error: metricsError.message,
         business_id: userData.business_id,
         reference_date,
@@ -631,28 +631,55 @@ const getLoyalCustomersMetrics = async (req, res) => {
       throw customersError;
     }
 
-    // Process the metrics data
-    const metrics = Array.isArray(metricsData) && metricsData.length > 0 ? metricsData[0] : {};
+    if (!metricsData || metricsData.length === 0) {
+      logger.warn('No data returned from metrics function', {
+        business_id: userData.business_id,
+        reference_date,
+        time_range
+      });
+      return res.json({
+        success: true,
+        data: {
+          segment: "Loyal Customers",
+          metrics: [],
+          customers: [],
+          time_window: {
+            reference_date,
+            time_range
+          }
+        }
+      });
+    }
 
-    // Tính phần trăm số lượng khách hàng mới trên tổng số khách hàng
-    const customerPercentage = totalCustomersCount > 0 ? (metrics.customer_count / totalCustomersCount) * 100 : 0;
-
-    // Return both metrics and detailed customer information
+    // Format the response with monthly breakdown
     const response = {
       segment: "Loyal Customers",
-      metrics: {
-        customer_count: metrics.customer_count ?? 0,
-        annual_customer_value: Number((metrics.annual_customer_value ?? 0).toFixed(2)),
-        purchase_frequency: Number((metrics.purchase_frequency ?? 0).toFixed(2)),
-        category_penetration: Number((metrics.category_penetration ?? 0).toFixed(2)),
-        customer_percentage: Number((customerPercentage ?? 0).toFixed(2)),
-      },
+      metrics: metricsData.map(period => ({
+        period: {
+          start_date: period.period_start,
+          end_date: period.period_end
+        },
+        values: {
+          customer_count: Number(period.customer_count || 0),
+          gmv: Number(period.gmv || 0),
+          orders: Number(period.orders || 0),
+          unique_customers: Number(period.unique_customers || 0),
+          aov: Number(period.aov || 0),
+          avg_bill_per_user: Number(period.avg_bill_per_user || 0),
+          arpu: Number(period.arpu || 0),
+          orders_per_day: Number(period.orders_per_day || 0),
+          orders_per_day_per_store: Number(period.orders_per_day_per_store || 0),
+          annual_customer_value: Number(period.annual_customer_value || 0),
+          purchase_frequency: Number(period.purchase_frequency || 0),
+          category_penetration: Number(period.category_penetration || 0)
+        }
+      })),
       customers: customersData || [],
       time_window: {
         reference_date,
         time_range,
-        start_date: metrics.start_date,
-        end_date: metrics.end_date
+        start_date: metricsData[0]?.period_start,
+        end_date: metricsData[metricsData.length - 1]?.period_end
       }
     };
 
