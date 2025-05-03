@@ -11,10 +11,10 @@ import { authenticationToken } from '../controllers/authController.js';
 const router = express.Router();
 
 // Calculate RFM scores for all customers of a business
-router.post('/rfm/calculate', authenticationToken, calculateRFMForBusiness);
+router.post('/rfm/calculate', authenticationToken, calculateRFMForBusiness); //ko chay, ko test api -> test truc tiep tren supabase
 
 // Get RFM analysis for a specific customer
-router.get('/rfm/rfm-customer/:customer_id', authenticationToken, getCustomerRFM);
+router.get('/rfm/rfm-customer/', authenticationToken, getCustomerRFM);
 
 // Get customers by segment
 router.get('/rfm/rfm-segment/:segment', authenticationToken, getCustomersBySegment);

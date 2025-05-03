@@ -91,7 +91,7 @@ const updateSegment = async (segment) => {
 
 // Insert the segment into Supabase
 const insertSegment = async (segment) => {
-    console.log('show segment req:', JSON.stringify(segment, null, 2));
+    //console.log('show segment req:', JSON.stringify(segment, null, 2));
 
     try {
         const { data, error } = await supabase

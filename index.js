@@ -8,6 +8,7 @@ import customerLifecycleRoutes from './src/routes/customerLifecycleRoutes.js';
 import RFMRoutes from './src/routes/RFMRoutes.js';
 import sheetSyncRoutes from './src/routes/sheetSyncRoutes.js';
 import googleAuthRoutes from './src/routes/googleAuthRoutes.js';
+import businessRoutes from './src/routes/businessRoutes.js';
 import cors from 'cors';
 
 dotenv.config();
@@ -17,7 +18,7 @@ const { HOST, PORT } = process.env;
 const app = express();
 
 const corsOptions = {
-  origin: 'http://localhost:8080', 
+  origin: 'http://localhost:8080',
   credentials: true,                // Cho phép gửi thông tin xác thực (cookie, header authorization)
 };
 
@@ -34,6 +35,7 @@ app.use('/api/', customerLifecycleRoutes);
 app.use('/api/', RFMRoutes);
 app.use('/api/', sheetSyncRoutes)
 app.use('/api/', googleAuthRoutes); 
+app.use('/api/', businessRoutes)
 
 
 // Error handling middleware

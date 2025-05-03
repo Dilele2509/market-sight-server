@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { checkAccountAvailable } from '../data/authData.js'
+import { checkAccountAvailable, checkTokenEmail } from '../data/authData.js'
 
 const { ACCESS_TOKEN_KEY } = process.env
 
@@ -58,5 +58,49 @@ const authenticationToken = async (req, res, next) => {
     });
 };
 
+const checkRegister = async (req, res, next) => {
+    try {
+        const { registerType } = req.body;
 
-export { login, authenticationToken };
+        if (registerType === 'account') {
+            req.nextHandler = 'addUser';
+            next();
+        } else if (registerType === 'business') {
+            req.nextHandler = 'addBusiness';
+            next();
+        } else {
+            return res.status(400).json({
+                message: 'Cannot define register type',
+            });
+        }
+    } catch (error) {
+        res.status(400).json({
+            message: 'Error in registration type middleware',
+        });
+    }
+};
+
+const verifyEmailToken = async (req, res) => {
+    const { token } = req.query;
+    try {
+        // Xác thực token
+        const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_KEY);
+        const email = decoded.email;
+        console.log('Email:', email);
+
+        // Gọi hàm checkTokenEmail để kiểm tra token và xóa dữ liệu
+        const isValidToken = await checkTokenEmail(token);
+
+        if (isValidToken) {
+            res.status(200).send('Email verified successfully');
+        } else {
+            res.status(400).send('Invalid or expired token');
+        }
+    } catch (error) {
+        console.error('Error verifying email:', error);
+        res.status(400).send('Invalid or expired token');
+    }
+};
+
+
+export { login, authenticationToken, checkRegister, verifyEmailToken };

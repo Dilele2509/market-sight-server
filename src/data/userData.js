@@ -1,4 +1,8 @@
 import { supabase } from '../../config.js';
+import dotenv from 'dotenv'
+import jwt from 'jsonwebtoken'
+
+dotenv.config()
 
 const getUsers = async () => {
     const { data, error } = await supabase.from('users').select('*');
@@ -23,4 +27,50 @@ const getUserByEmail = async (email) => {
     return { status: 200, data: userData };
 }
 
-export { getUsers, getUserByEmail };
+const insertUser = async (data) => {
+    if (data.password !== data.confirmPassword) {
+        return { status: 400, data: 'Password and confirm password do not match' };
+    }
+
+    const { data: resData, error } = await supabase
+        .from('users')
+        .insert([
+            {
+                business_id: Number(data.business_id),
+                role_id: Number(data.role),
+                first_name: data.firstName,
+                last_name: data.lastName,
+                email: data.email,
+                password_hash: data.password,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+            }
+        ])
+        .select();
+
+    if (error) throw error;
+
+    const insertedUser = resData?.[0];
+    if (!insertedUser) {
+        return { status: 500, data: 'Failed to insert user' };
+    }
+
+    const user_id = insertedUser.user_id;
+    // Generate a JWT token
+    const token = jwt.sign({ email: insertedUser.email }, process.env.ACCESS_TOKEN_KEY, { expiresIn: '1h' });
+
+    const { error: emailInsertError } = await supabase
+        .from('email_waiting_verify')
+        .insert([
+            {
+                user_id: user_id,
+                token: token
+            }
+        ]);
+
+    if (emailInsertError) throw emailInsertError;
+
+    return { status: 200, data: insertedUser, token: token };
+};
+
+export { getUsers, getUserByEmail, insertUser };

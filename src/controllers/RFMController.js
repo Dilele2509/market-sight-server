@@ -68,7 +68,7 @@ const calculateRFMForBusiness = async (req, res) => {
 // Lấy thông tin RFM của một khách hàng cụ thể
 const getCustomerRFM = async (req, res) => {
   const user = req.user;
-  const { customer_id } = req.params;
+  const { customer_id } = req.body;
   
   logger.info('Fetching RFM data for customer', { customer_id });
   
