@@ -1,5 +1,3 @@
-
-
 export const updateBusinessIdsQuery = `
   -- First, get all users and their business_ids
   WITH user_businesses AS (

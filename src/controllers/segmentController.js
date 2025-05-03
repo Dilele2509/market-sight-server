@@ -1,4 +1,4 @@
-import { checkSegmentExists, saveOrUpdateSegment, getSegmentByUser } from "../data/segmentData.js";
+import { checkSegmentExists, saveOrUpdateSegment, getSegmentByUser, updateStatus } from "../data/segmentData.js";
 
 const allSegmentByUser = async (req, res) => {
     try {
@@ -69,8 +69,54 @@ const checkSegment = async (req, res) => {
     }
 }
 
+const updateStatusSegment = async (req, res) => {
+    try {
+        const { segment_id, status } = req.body;
+
+        if (!segment_id || typeof status === 'undefined') {
+            return res.status(400).json({ error: "Missing segment_id or status" });
+        }
+
+        let newStatus;
+        if (status === 'active') newStatus = 'inactive';
+        else if (status === 'inactive') newStatus = 'active';
+        else newStatus = 'active';
+
+        console.log(newStatus);
+        await updateStatus(segment_id, newStatus);
+
+        res.status(200).json({ message: "Segment status updated successfully", newStatus });
+    } catch (error) {
+        console.error("Update status failed:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+};
+
+const deleteSegment = async (req, res) => {
+    try {
+        const { segment_id } = req.body;
+        console.log(segment_id);
+        if (!segment_id) {
+            return res.status(400).json({ error: "Missing segment_id" });
+        }
+
+        const result = await deleteSegmentItem(segment_id);
+
+        if (result.statusCode === 500) {
+            return res.status(500).json({ error: result.message });
+        }
+
+        return res.status(200).json({ message: "Segment deleted successfully" });
+    } catch (error) {
+        console.error("Error deleting segment:", error);
+        return res.status(500).json({ error: "Internal server error" });
+    }
+}
+
 export {
     saveSegment,
     checkSegment,
-    allSegmentByUser
+    allSegmentByUser,
+    updateStatusSegment,
+    deleteSegment
 };

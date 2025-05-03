@@ -132,8 +132,40 @@ const insertSegment = async (segment) => {
     }
 };
 
+const updateStatus = async (segment_id, status) => {
+    try {
+        const { error } = await supabase
+            .from('segmentation')
+            .update({ status: status })
+            .eq('segment_id', segment_id);
+
+        if (error) throw error;
+    } catch (error) {
+        console.error('Error updating segment:', error);
+        return { statusCode: 500, message: 'Failed to update segment.' };
+    }
+}
+
+const deleteSegmentItem = async (segment_id) => {
+    try {
+        const { error } = await supabase
+            .from('segmentation')
+            .delete() 
+            .eq('segment_id', segment_id);
+
+        if (error) throw error;
+
+        return { statusCode: 200, message: 'Segment deleted successfully' };
+    } catch (error) {
+        console.error('Error deleting segment:', error);
+        return { statusCode: 500, message: 'Failed to delete segment.' };
+    }
+}
+
 export {
     saveOrUpdateSegment,
     checkSegmentExists,
-    getSegmentByUser
+    getSegmentByUser,
+    updateStatus,
+    deleteSegmentItem
 };
