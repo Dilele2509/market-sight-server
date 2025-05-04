@@ -46,8 +46,13 @@ const initiateGoogleAuth = async (req, res) => {
       prompt: 'consent' // Force consent screen to get refresh token
     });
 
-    // Redirect to Google's OAuth page
-    res.redirect(authUrl);
+    // Return the OAuth URL instead of redirecting
+    res.json({
+      success: true,
+      data: {
+        authUrl
+      }
+    });
   } catch (error) {
     logger.error('Error initiating OAuth flow', {
       error: error.message,
@@ -63,10 +68,11 @@ const initiateGoogleAuth = async (req, res) => {
 
 // Handle OAuth callback
 const handleOAuthCallback = async (req, res) => {
-  const { code, state } = req.query;
+  const { code, state, scope } = req.query;
 
   logger.info('Handling OAuth callback', {
-    state
+    state,
+    scope
   });
 
   if (!code || !state) {
@@ -80,12 +86,7 @@ const handleOAuthCallback = async (req, res) => {
   try {
     // Verify state parameter
     const decodedState = JSON.parse(Buffer.from(state, 'base64').toString());
-    const { user_id, timestamp } = decodedState;
-
-    // Check if state is expired (5 minutes)
-    if (Date.now() - timestamp > 5 * 60 * 1000) {
-      throw new Error('OAuth state expired');
-    }
+    const { user_id } = decodedState;
 
     // Exchange code for tokens
     const { tokens } = await oauth2Client.getToken(code);
@@ -95,7 +96,7 @@ const handleOAuthCallback = async (req, res) => {
     const supabase = getSupabase();
     const { data: userData, error: userError } = await supabase
       .from('users')
-      .select('user_id')
+      .select('user_id, business_id')
       .eq('user_id', user_id)
       .single();
 
@@ -108,28 +109,43 @@ const handleOAuthCallback = async (req, res) => {
       .from('google_tokens')
       .upsert({
         user_id,
+        business_id: userData.business_id,
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
-        expiry_date: tokens.expiry_date,
+        expiry_date: new Date(tokens.expiry_date).toISOString(),
         scope: tokens.scope,
         token_type: tokens.token_type,
         updated_at: new Date().toISOString()
       }, {
-        onConflict: 'user_id'
+        onConflict: 'user_id,business_id'
       });
 
     if (tokenError) {
       throw tokenError;
     }
 
-    // Redirect to success page
-    res.redirect(`${process.env.FRONTEND_URL}/settings/integrations?status=success`);
+    // Return success response
+    res.json({
+      success: true,
+      message: "Google OAuth successful",
+      data: {
+        user_id,
+        business_id: userData.business_id,
+        scope: tokens.scope,
+        expiry_date: new Date(tokens.expiry_date).toISOString(),
+        token_type: tokens.token_type
+      }
+    });
   } catch (error) {
     logger.error('Error handling OAuth callback', {
       error: error.message,
       stack: error.stack
     });
-    res.redirect(`${process.env.FRONTEND_URL}/settings/integrations?status=error&message=${encodeURIComponent(error.message)}`);
+    
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
   }
 };
 

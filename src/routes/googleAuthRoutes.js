@@ -16,9 +16,9 @@ router.get('/auth/google', authenticationToken, initiateGoogleAuth);
 router.get('/oauth2callback', handleOAuthCallback);
 
 // Revoke Google access
-router.post('/revoke', authenticationToken, revokeAccess);
+router.post('/auth/revoke', authenticationToken, revokeAccess);
 
 // Get OAuth status
-router.get('/status', authenticationToken, getAuthStatus);
+router.get('/auth/status', authenticationToken, getAuthStatus);
 
 export default router; 
