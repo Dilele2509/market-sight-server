@@ -118,10 +118,25 @@ const syncSegmentToSheet = async (req, res) => {
       throw new Error('Segment not found');
     }
 
-    // Get segment customers
+    // Get segment customers with their details
     const { data: customers, error: customersError } = await supabase
       .from('segment_customers')
-      .select('customer_id')
+      .select(`
+        customer_id,
+        assigned_at,
+        customers!inner (
+          birth_date,
+          registration_date,
+          business_id,
+          phone,
+          gender,
+          address,
+          city,
+          first_name,
+          last_name,
+          email
+        )
+      `)
       .eq('segment_id', segment_id);
 
     if (customersError) {
@@ -209,9 +224,31 @@ const syncSegmentToSheet = async (req, res) => {
 
     // Prepare data for Google Sheets
     const values = [
-      ['Customer ID', 'Segment Name', 'Assigned At'],
+      [
+        'Customer ID',
+        'First Name',
+        'Last Name',
+        'Email',
+        'Phone',
+        'Gender',
+        'Birth Date',
+        'Registration Date',
+        'Address',
+        'City',
+        'Segment Name',
+        'Assigned At'
+      ],
       ...customers.map(customer => [
         customer.customer_id,
+        customer.customers.first_name || '',
+        customer.customers.last_name || '',
+        customer.customers.email || '',
+        customer.customers.phone || '',
+        customer.customers.gender || '',
+        customer.customers.birth_date ? new Date(customer.customers.birth_date).toISOString().split('T')[0] : '',
+        customer.customers.registration_date ? new Date(customer.customers.registration_date).toISOString() : '',
+        customer.customers.address || '',
+        customer.customers.city || '',
         segment.segment_name,
         customer.assigned_at
       ])
@@ -225,6 +262,23 @@ const syncSegmentToSheet = async (req, res) => {
       valueInputOption: 'RAW',
       requestBody: {
         values
+      }
+    });
+
+    // Auto-resize columns for better readability
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: targetSheetId,
+      requestBody: {
+        requests: [{
+          autoResizeDimensions: {
+            dimensions: {
+              sheetId: 0,
+              dimension: 'COLUMNS',
+              startIndex: 0,
+              endIndex: values[0].length
+            }
+          }
+        }]
       }
     });
 
