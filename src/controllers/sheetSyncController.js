@@ -13,16 +13,12 @@ const oauth2Client = new OAuth2Client(
   process.env.GOOGLE_REDIRECT_URI
 );
 
-// Function to get preview data for a segment
-const getSegmentPreview = async (req, res) => {
+// Get available segments for a business
+const getAvailableSegments = async (req, res) => {
   const user = req.user;
-  const { segment_name, reference_date, time_range } = req.body;
 
-  logger.info('Starting segment preview generation', {
-    user_id: user?.user_id,
-    segment_name,
-    reference_date,
-    time_range
+  logger.info('Getting available segments', {
+    user_id: user?.user_id
   });
 
   if (!user || !user.user_id) {
@@ -33,17 +29,9 @@ const getSegmentPreview = async (req, res) => {
     });
   }
 
-  if (!segment_name || !reference_date || !time_range) {
-    logger.warn('Missing required parameters', { segment_name, reference_date, time_range });
-    return res.status(400).json({
-      success: false,
-      error: "Segment name, reference date, and time range are required"
-    });
-  }
-
   try {
     const supabase = getSupabase();
-    
+
     // Get business_id
     const { data: userData, error: userError } = await supabase
       .from('users')
@@ -52,99 +40,26 @@ const getSegmentPreview = async (req, res) => {
       .single();
 
     if (userError || !userData?.business_id) {
-      logger.error('Error retrieving business_id', {
-        error: userError?.message,
-        user_id: user.user_id
-      });
-      return res.status(400).json({
-        success: false,
-        error: "Business ID not found"
-      });
+      throw new Error('Business ID not found');
     }
 
-    // Get segment data based on segment name
-    let segmentData;
-    switch (segment_name.toLowerCase()) {
-      case 'new customers':
-        const { data: newCustomersData, error: newCustomersError } = await supabase.rpc(
-          'get_detailed_new_customers_info',
-          {
-            p_business_id: Number(userData.business_id),
-            p_reference_date: reference_date,
-            p_time_range: Number(time_range)
-          }
-        );
-        if (newCustomersError) throw newCustomersError;
-        segmentData = newCustomersData;
-        break;
+    // Get segments
+    const { data: segments, error: segmentsError } = await supabase
+      .from('segmentation')
+      .select('*')
+      .eq('business_id', userData.business_id)
+      .eq('status', 'active');
 
-      case 'early-life customers':
-        const { data: earlyLifeData, error: earlyLifeError } = await supabase.rpc(
-          'get_detailed_early_life_customers_info',
-          {
-            p_business_id: Number(userData.business_id),
-            p_reference_date: reference_date,
-            p_time_range: Number(time_range)
-          }
-        );
-        if (earlyLifeError) throw earlyLifeError;
-        segmentData = earlyLifeData;
-        break;
-
-      case 'mature customers':
-        const { data: matureData, error: matureError } = await supabase.rpc(
-          'get_detailed_mature_customers_info',
-          {
-            p_business_id: Number(userData.business_id),
-            p_reference_date: reference_date,
-            p_time_range: Number(time_range)
-          }
-        );
-        if (matureError) throw matureError;
-        segmentData = matureData;
-        break;
-
-      case 'loyal customers':
-        const { data: loyalData, error: loyalError } = await supabase.rpc(
-          'get_detailed_loyal_customers_info',
-          {
-            p_business_id: Number(userData.business_id),
-            p_reference_date: reference_date,
-            p_time_range: Number(time_range)
-          }
-        );
-        if (loyalError) throw loyalError;
-        segmentData = loyalData;
-        break;
-
-      default:
-        return res.status(400).json({
-          success: false,
-          error: "Invalid segment name"
-        });
+    if (segmentsError) {
+      throw segmentsError;
     }
-
-    // Format preview data
-    const previewData = {
-      segment_name,
-      record_count: segmentData.length,
-      sample_data: segmentData.slice(0, 5), // Show first 5 records as preview
-      metrics: {
-        total_customers: segmentData.length,
-        // Add other relevant metrics based on segment type
-      },
-      time_window: {
-        reference_date,
-        time_range
-      }
-    };
 
     res.json({
       success: true,
-      data: previewData
+      data: segments
     });
   } catch (error) {
-    logger.error('Error generating segment preview', {
+    logger.error('Error getting segments', {
       error: error.message,
       stack: error.stack,
       user_id: user?.user_id
@@ -156,61 +71,61 @@ const getSegmentPreview = async (req, res) => {
   }
 };
 
-// Function to sync segment data to Google Sheets
+// Sync segment to Google Sheets
 const syncSegmentToSheet = async (req, res) => {
   const user = req.user;
-  const { segment_name, reference_date, time_range, sheet_id, sheet_name } = req.body;
+  const { segment_id, sheet_id, sheet_name, create_new } = req.body;
 
-  logger.info('Starting segment sync to Google Sheets', {
+  // Convert create_new to boolean if it's a string
+  const shouldCreateNew = create_new === true || create_new === 'true';
+
+  logger.info('Syncing segment to Google Sheets', {
     user_id: user?.user_id,
-    segment_name,
-    reference_date,
-    time_range,
+    segment_id,
     sheet_id,
-    sheet_name
+    sheet_name,
+    create_new: shouldCreateNew
   });
 
-  if (!user || !user.user_id) {
-    logger.warn('User authentication missing', { user });
+  if (!user || !user.user_id || !user.business_id) {
+    logger.warn('User authentication missing or incomplete', { user });
     return res.status(400).json({
       success: false,
-      error: "User authentication required"
+      error: "User authentication required with business_id"
     });
   }
 
-  if (!segment_name || !reference_date || !time_range || !sheet_id || !sheet_name) {
-    logger.warn('Missing required parameters', { 
-      segment_name, 
-      reference_date, 
-      time_range, 
-      sheet_id, 
-      sheet_name 
-    });
+  if (!segment_id || (!sheet_id && !shouldCreateNew)) {
+    logger.warn('Missing required parameters', { segment_id, sheet_id, shouldCreateNew });
     return res.status(400).json({
       success: false,
-      error: "All parameters are required"
+      error: "Segment ID and either sheet ID or create_new flag are required"
     });
   }
 
   try {
     const supabase = getSupabase();
-    
-    // Get business_id and Google tokens
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('business_id')
-      .eq('user_id', user.user_id)
+
+    // Get segment details
+    const { data: segment, error: segmentError } = await supabase
+      .from('segmentation')
+      .select('*')
+      .eq('segment_id', segment_id)
+      .eq('business_id', user.business_id)
       .single();
 
-    if (userError || !userData?.business_id) {
-      logger.error('Error retrieving business_id', {
-        error: userError?.message,
-        user_id: user.user_id
-      });
-      return res.status(400).json({
-        success: false,
-        error: "Business ID not found"
-      });
+    if (segmentError || !segment) {
+      throw new Error('Segment not found');
+    }
+
+    // Get segment customers
+    const { data: customers, error: customersError } = await supabase
+      .from('segment_customers')
+      .select('customer_id')
+      .eq('segment_id', segment_id);
+
+    if (customersError) {
+      throw customersError;
     }
 
     // Get Google tokens
@@ -221,123 +136,94 @@ const syncSegmentToSheet = async (req, res) => {
       .single();
 
     if (tokenError || !tokenData) {
-      logger.error('Error retrieving Google tokens', {
-        error: tokenError?.message,
-        user_id: user.user_id
-      });
-      return res.status(400).json({
-        success: false,
-        error: "Google account not connected. Please connect your Google account first."
-      });
+      throw new Error('Google account not connected');
     }
 
-    // Check if token is expired
-    if (tokenData.expiry_date < Date.now()) {
-      // Refresh token
-      oauth2Client.setCredentials({
-        refresh_token: tokenData.refresh_token
-      });
+    // Set up OAuth2 client with tokens
+    oauth2Client.setCredentials({
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token
+    });
 
-      const { credentials } = await oauth2Client.refreshAccessToken();
+    let targetSheetId = sheet_id;
+    let targetSheetName = sheet_name || 'Sheet1';
+    const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+
+    // If creating new file
+    if (shouldCreateNew) {
+      const drive = google.drive({ version: 'v3', auth: oauth2Client });
       
-      // Update stored tokens
-      const { error: updateError } = await supabase
-        .from('google_tokens')
-        .update({
-          access_token: credentials.access_token,
-          expiry_date: credentials.expiry_date,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', user.user_id);
+      // Create new spreadsheet
+      const fileMetadata = {
+        name: `${segment.segment_name} - Customer Segment`,
+        mimeType: 'application/vnd.google-apps.spreadsheet'
+      };
 
-      if (updateError) {
-        throw updateError;
-      }
-
-      oauth2Client.setCredentials(credentials);
-    } else {
-      oauth2Client.setCredentials({
-        access_token: tokenData.access_token,
-        refresh_token: tokenData.refresh_token
+      const file = await drive.files.create({
+        requestBody: fileMetadata,
+        fields: 'id'
       });
-    }
 
-    // Get segment data
-    let segmentData;
-    switch (segment_name.toLowerCase()) {
-      case 'new customers':
-        const { data: newCustomersData, error: newCustomersError } = await supabase.rpc(
-          'get_detailed_new_customers_info',
-          {
-            p_business_id: Number(userData.business_id),
-            p_reference_date: reference_date,
-            p_time_range: Number(time_range)
+      targetSheetId = file.data.id;
+
+      // Rename the default sheet to the specified name or "Sheet1"
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: targetSheetId,
+        requestBody: {
+          requests: [{
+            updateSheetProperties: {
+              properties: {
+                sheetId: 0, // First sheet
+                title: targetSheetName
+              },
+              fields: 'title'
+            }
+          }]
+        }
+      });
+    } else {
+      // Check if sheet exists in the file
+      const spreadsheet = await sheets.spreadsheets.get({
+        spreadsheetId: targetSheetId,
+        fields: 'sheets.properties'
+      });
+
+      const existingSheets = spreadsheet.data.sheets.map(sheet => sheet.properties.title);
+      
+      if (!existingSheets.includes(targetSheetName)) {
+        // Create new sheet if it doesn't exist
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId: targetSheetId,
+          requestBody: {
+            requests: [{
+              addSheet: {
+                properties: {
+                  title: targetSheetName
+                }
+              }
+            }]
           }
-        );
-        if (newCustomersError) throw newCustomersError;
-        segmentData = newCustomersData;
-        break;
-
-      case 'early-life customers':
-        const { data: earlyLifeData, error: earlyLifeError } = await supabase.rpc(
-          'get_detailed_early_life_customers_info',
-          {
-            p_business_id: Number(userData.business_id),
-            p_reference_date: reference_date,
-            p_time_range: Number(time_range)
-          }
-        );
-        if (earlyLifeError) throw earlyLifeError;
-        segmentData = earlyLifeData;
-        break;
-
-      case 'mature customers':
-        const { data: matureData, error: matureError } = await supabase.rpc(
-          'get_detailed_mature_customers_info',
-          {
-            p_business_id: Number(userData.business_id),
-            p_reference_date: reference_date,
-            p_time_range: Number(time_range)
-          }
-        );
-        if (matureError) throw matureError;
-        segmentData = matureData;
-        break;
-
-      case 'loyal customers':
-        const { data: loyalData, error: loyalError } = await supabase.rpc(
-          'get_detailed_loyal_customers_info',
-          {
-            p_business_id: Number(userData.business_id),
-            p_reference_date: reference_date,
-            p_time_range: Number(time_range)
-          }
-        );
-        if (loyalError) throw loyalError;
-        segmentData = loyalData;
-        break;
-
-      default:
-        return res.status(400).json({
-          success: false,
-          error: "Invalid segment name"
         });
+      }
     }
 
     // Prepare data for Google Sheets
-    const headers = Object.keys(segmentData[0]);
     const values = [
-      headers,
-      ...segmentData.map(record => headers.map(header => record[header]))
+      ['Customer ID', 'Segment Name', 'Assigned At'],
+      ...customers.map(customer => [
+        customer.customer_id,
+        segment.segment_name,
+        customer.assigned_at
+      ])
     ];
 
     // Update Google Sheet
     await sheets.spreadsheets.values.update({
       auth: oauth2Client,
-      spreadsheetId: sheet_id,
-      range: `${sheet_name}!A1`,
+      spreadsheetId: targetSheetId,
+      range: `${targetSheetName}!A1`,
       valueInputOption: 'RAW',
-      resource: {
+      requestBody: {
         values
       }
     });
@@ -347,13 +233,11 @@ const syncSegmentToSheet = async (req, res) => {
       .from('sheet_sync_history')
       .insert({
         user_id: user.user_id,
-        business_id: userData.business_id,
-        segment_name,
-        record_count: segmentData.length,
+        business_id: user.business_id,
+        segment_id,
+        sheet_id: targetSheetId,
         status: 'completed',
-        sheet_id,
-        sheet_name,
-        sync_date: new Date().toISOString()
+        created_at: new Date().toISOString()
       });
 
     if (syncLogError) {
@@ -365,11 +249,11 @@ const syncSegmentToSheet = async (req, res) => {
 
     res.json({
       success: true,
-      message: "Segment data successfully synced to Google Sheets",
+      message: "Segment successfully synced to Google Sheets",
       data: {
-        record_count: segmentData.length,
-        sheet_id,
-        sheet_name
+        sheet_id: targetSheetId,
+        sheet_name: sheet_name || 'Sheet1',
+        customer_count: customers.length
       }
     });
   } catch (error) {
@@ -381,18 +265,17 @@ const syncSegmentToSheet = async (req, res) => {
 
     // Log failed sync attempt
     try {
+      const supabase = getSupabase();
       await supabase
         .from('sheet_sync_history')
         .insert({
           user_id: user.user_id,
-          business_id: userData.business_id,
-          segment_name,
-          record_count: 0,
-          status: 'failed',
+          business_id: user.business_id,
+          segment_id,
           sheet_id,
-          sheet_name,
-          sync_date: new Date().toISOString(),
-          error_message: error.message
+          status: 'failed',
+          error_message: error.message,
+          created_at: new Date().toISOString()
         });
     } catch (logError) {
       logger.error('Error logging failed sync attempt', {
@@ -408,15 +291,12 @@ const syncSegmentToSheet = async (req, res) => {
   }
 };
 
-// Function to get sync history
+// Get sync history
 const getSyncHistory = async (req, res) => {
   const user = req.user;
-  const { limit = 10, offset = 0 } = req.query;
 
-  logger.info('Retrieving sync history', {
-    user_id: user?.user_id,
-    limit,
-    offset
+  logger.info('Getting sync history', {
+    user_id: user?.user_id
   });
 
   if (!user || !user.user_id) {
@@ -429,41 +309,30 @@ const getSyncHistory = async (req, res) => {
 
   try {
     const supabase = getSupabase();
-    
+
     // Get sync history
-    const { data: historyData, error: historyError, count } = await supabase
+    const { data: history, error: historyError } = await supabase
       .from('sheet_sync_history')
-      .select('*', { count: 'exact' })
+      .select(`
+        *,
+        segmentation:segment_id (
+          segment_name,
+          description
+        )
+      `)
       .eq('user_id', user.user_id)
-      .order('sync_date', { ascending: false })
-      .range(offset, offset + limit - 1);
+      .order('created_at', { ascending: false });
 
     if (historyError) {
       throw historyError;
     }
 
-    // Calculate success rate
-    const successCount = historyData.filter(record => record.status === 'completed').length;
-    const successRate = historyData.length > 0 ? (successCount / historyData.length) * 100 : 0;
-
     res.json({
       success: true,
-      data: {
-        history: historyData,
-        pagination: {
-          total: count,
-          limit: Number(limit),
-          offset: Number(offset)
-        },
-        metrics: {
-          success_rate: Number(successRate.toFixed(2)),
-          total_syncs: historyData.length,
-          successful_syncs: successCount
-        }
-      }
+      data: history
     });
   } catch (error) {
-    logger.error('Error retrieving sync history', {
+    logger.error('Error getting sync history', {
       error: error.message,
       stack: error.stack,
       user_id: user?.user_id
@@ -476,7 +345,7 @@ const getSyncHistory = async (req, res) => {
 };
 
 export {
-  getSegmentPreview,
+  getAvailableSegments,
   syncSegmentToSheet,
   getSyncHistory
 }; 

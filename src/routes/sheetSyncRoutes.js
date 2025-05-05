@@ -1,18 +1,18 @@
 import express from 'express';
 import { authenticationToken } from '../controllers/authController.js';
 import {
-  getSegmentPreview,
+  getAvailableSegments,
   syncSegmentToSheet,
   getSyncHistory
 } from '../controllers/sheetSyncController.js';
 
 const router = express.Router();
 
-// Get preview data for a segment
-router.post('/sync/preview', authenticationToken, getSegmentPreview);
+// Get available segments for a business
+router.get('/sync/segments', authenticationToken, getAvailableSegments);
 
-// Sync segment data to Google Sheets
-router.post('/sync/sheetSync', authenticationToken, syncSegmentToSheet);
+// Sync segment to Google Sheets
+router.post('/sync', authenticationToken, syncSegmentToSheet);
 
 // Get sync history
 router.get('/sync/history', authenticationToken, getSyncHistory);
