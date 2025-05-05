@@ -1124,7 +1124,7 @@ const getCustomerStageMonthlyBreakdown = async (req, res) => {
 
     // Validate reference_date is not in future
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // today.setHours(0, 0, 0, 0);
     if (referenceDate > today) {
       return res.status(400).json({
         success: false,
