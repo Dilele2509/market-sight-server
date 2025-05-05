@@ -10,16 +10,16 @@ const login = async (req, res) => {
     console.log(email, password_hash);
 
     if (!email) {
-        return res.status(400).json({ error: 'Missing email' });
+        return res.status(400).json({ message: 'Missing email' });
     } else if (!password_hash) {
-        return res.status(400).json({ error: 'Missing password' });
+        return res.status(400).json({ message: 'Missing password' });
     }
 
     const accountCheckData = await checkAccountAvailable(email, password_hash);
 
     console.log('check result: ', accountCheckData);
     if (accountCheckData.status !== 200) {
-        return res.status(401).json({ error: 'Invalid credentials' });
+        return res.status(401).json({ message: accountCheckData.data.message });
     }
 
     //authorization
