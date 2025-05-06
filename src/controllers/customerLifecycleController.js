@@ -152,6 +152,29 @@ const getNewCustomersMetrics = async (req, res) => {
           conversion_to_second_purchase_rate: Number(period.conversion_to_second_purchase_rate || 0)
         }
       })),
+      aggregated_metrics: (() => {
+        // Calculate total values across all periods
+        const totalGMV = metricsData.reduce((sum, period) => sum + Number(period.gmv || 0), 0);
+        const totalOrders = metricsData.reduce((sum, period) => sum + Number(period.orders || 0), 0);
+        const totalUniqueCustomers = metricsData.reduce((sum, period) => sum + Number(period.unique_customers || 0), 0);
+        const totalCustomerCount = metricsData.reduce((sum, period) => sum + Number(period.customer_count || 0), 0);
+        
+        // Calculate total days in the time range
+        const startDate = new Date(metricsData[0]?.period_start);
+        const endDate = new Date(metricsData[metricsData.length - 1]?.period_end);
+        const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+
+        return {
+          gmv: totalGMV,
+          orders: totalOrders,
+          unique_customers: totalUniqueCustomers,
+          aov: totalOrders > 0 ? totalGMV / totalOrders : 0,
+          avg_bill_per_user: totalUniqueCustomers > 0 ? totalGMV / totalUniqueCustomers : 0,
+          arpu: totalCustomerCount > 0 ? totalGMV / totalCustomerCount : 0,
+          orders_per_day: totalDays > 0 ? totalOrders / totalDays : 0,
+          orders_per_day_per_store: totalDays > 0 ? totalOrders / totalDays : 0 // Assuming single store for now
+        };
+      })(),
       customers: customersData || [],
       time_window: {
         reference_date,
@@ -326,6 +349,43 @@ const getEarlyLifeCustomersMetrics = async (req, res) => {
           avg_order_value: Number(period.avg_order_value || 0)
         }
       })),
+      aggregated_metrics: (() => {
+        // Calculate total values across all periods
+        const totalGMV = metricsData.reduce((sum, period) => sum + Number(period.gmv || 0), 0);
+        const totalOrders = metricsData.reduce((sum, period) => sum + Number(period.orders || 0), 0);
+        const totalUniqueCustomers = metricsData.reduce((sum, period) => sum + Number(period.unique_customers || 0), 0);
+        const totalCustomerCount = metricsData.reduce((sum, period) => sum + Number(period.customer_count || 0), 0);
+        
+        // Calculate total days in the time range
+        const startDate = new Date(metricsData[0]?.period_start);
+        const endDate = new Date(metricsData[metricsData.length - 1]?.period_end);
+        const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+
+        // Calculate weighted averages for metrics that need it
+        const weightedRepeatPurchaseRate = metricsData.reduce((sum, period) => {
+          const weight = Number(period.unique_customers || 0);
+          return sum + (Number(period.repeat_purchase_rate || 0) * weight);
+        }, 0) / (totalUniqueCustomers || 1);
+
+        const weightedAvgTimeBetweenPurchases = metricsData.reduce((sum, period) => {
+          const weight = Number(period.orders || 0);
+          return sum + (Number(period.avg_time_between_purchases || 0) * weight);
+        }, 0) / (totalOrders || 1);
+
+        return {
+          gmv: totalGMV,
+          orders: totalOrders,
+          unique_customers: totalUniqueCustomers,
+          aov: totalOrders > 0 ? totalGMV / totalOrders : 0,
+          avg_bill_per_user: totalUniqueCustomers > 0 ? totalGMV / totalUniqueCustomers : 0,
+          arpu: totalCustomerCount > 0 ? totalGMV / totalCustomerCount : 0,
+          orders_per_day: totalDays > 0 ? totalOrders / totalDays : 0,
+          orders_per_day_per_store: totalDays > 0 ? totalOrders / totalDays : 0, // Assuming single store for now
+          repeat_purchase_rate: weightedRepeatPurchaseRate,
+          avg_time_between_purchases: weightedAvgTimeBetweenPurchases,
+          avg_order_value: totalOrders > 0 ? totalGMV / totalOrders : 0
+        };
+      })(),
       customers: customersData || [],
       time_window: {
         reference_date,
@@ -477,7 +537,7 @@ const getMatureCustomersMetrics = async (req, res) => {
       });
     }
 
-    // Format the response with monthly breakdown
+    // Format the response with monthly breakdown for mature customers
     const response = {
       segment: "Mature Customers",
       metrics: metricsData.map(period => ({
@@ -500,6 +560,48 @@ const getMatureCustomersMetrics = async (req, res) => {
           monthly_spend: Number(period.monthly_spend || 0)
         }
       })),
+      aggregated_metrics: (() => {
+        // Calculate total values across all periods
+        const totalGMV = metricsData.reduce((sum, period) => sum + Number(period.gmv || 0), 0);
+        const totalOrders = metricsData.reduce((sum, period) => sum + Number(period.orders || 0), 0);
+        const totalUniqueCustomers = metricsData.reduce((sum, period) => sum + Number(period.unique_customers || 0), 0);
+        const totalCustomerCount = metricsData.reduce((sum, period) => sum + Number(period.customer_count || 0), 0);
+        
+        // Calculate total days in the time range
+        const startDate = new Date(metricsData[0]?.period_start);
+        const endDate = new Date(metricsData[metricsData.length - 1]?.period_end);
+        const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+
+        // Calculate weighted averages for metrics that need it
+        const weightedPurchaseFrequency = metricsData.reduce((sum, period) => {
+          const weight = Number(period.unique_customers || 0);
+          return sum + (Number(period.purchase_frequency || 0) * weight);
+        }, 0) / (totalUniqueCustomers || 1);
+
+        const weightedAvgBasketSize = metricsData.reduce((sum, period) => {
+          const weight = Number(period.orders || 0);
+          return sum + (Number(period.avg_basket_size || 0) * weight);
+        }, 0) / (totalOrders || 1);
+
+        const weightedMonthlySpend = metricsData.reduce((sum, period) => {
+          const weight = Number(period.unique_customers || 0);
+          return sum + (Number(period.monthly_spend || 0) * weight);
+        }, 0) / (totalUniqueCustomers || 1);
+
+        return {
+          gmv: totalGMV,
+          orders: totalOrders,
+          unique_customers: totalUniqueCustomers,
+          aov: totalOrders > 0 ? totalGMV / totalOrders : 0,
+          avg_bill_per_user: totalUniqueCustomers > 0 ? totalGMV / totalUniqueCustomers : 0,
+          arpu: totalCustomerCount > 0 ? totalGMV / totalCustomerCount : 0,
+          orders_per_day: totalDays > 0 ? totalOrders / totalDays : 0,
+          orders_per_day_per_store: totalDays > 0 ? totalOrders / totalDays : 0, // Assuming single store for now
+          purchase_frequency: weightedPurchaseFrequency,
+          avg_basket_size: weightedAvgBasketSize,
+          monthly_spend: weightedMonthlySpend
+        };
+      })(),
       customers: customersData || [],
       time_window: {
         reference_date,
@@ -651,7 +753,7 @@ const getLoyalCustomersMetrics = async (req, res) => {
       });
     }
 
-    // Format the response with monthly breakdown
+    // Format the response with monthly breakdown for loyal customers
     const response = {
       segment: "Loyal Customers",
       metrics: metricsData.map(period => ({
@@ -674,6 +776,48 @@ const getLoyalCustomersMetrics = async (req, res) => {
           category_penetration: Number(period.category_penetration || 0)
         }
       })),
+      aggregated_metrics: (() => {
+        // Calculate total values across all periods
+        const totalGMV = metricsData.reduce((sum, period) => sum + Number(period.gmv || 0), 0);
+        const totalOrders = metricsData.reduce((sum, period) => sum + Number(period.orders || 0), 0);
+        const totalUniqueCustomers = metricsData.reduce((sum, period) => sum + Number(period.unique_customers || 0), 0);
+        const totalCustomerCount = metricsData.reduce((sum, period) => sum + Number(period.customer_count || 0), 0);
+        
+        // Calculate total days in the time range
+        const startDate = new Date(metricsData[0]?.period_start);
+        const endDate = new Date(metricsData[metricsData.length - 1]?.period_end);
+        const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+
+        // Calculate weighted averages for metrics that need it
+        const weightedAnnualCustomerValue = metricsData.reduce((sum, period) => {
+          const weight = Number(period.unique_customers || 0);
+          return sum + (Number(period.annual_customer_value || 0) * weight);
+        }, 0) / (totalUniqueCustomers || 1);
+
+        const weightedPurchaseFrequency = metricsData.reduce((sum, period) => {
+          const weight = Number(period.unique_customers || 0);
+          return sum + (Number(period.purchase_frequency || 0) * weight);
+        }, 0) / (totalUniqueCustomers || 1);
+
+        const weightedCategoryPenetration = metricsData.reduce((sum, period) => {
+          const weight = Number(period.unique_customers || 0);
+          return sum + (Number(period.category_penetration || 0) * weight);
+        }, 0) / (totalUniqueCustomers || 1);
+
+        return {
+          gmv: totalGMV,
+          orders: totalOrders,
+          unique_customers: totalUniqueCustomers,
+          aov: totalOrders > 0 ? totalGMV / totalOrders : 0,
+          avg_bill_per_user: totalUniqueCustomers > 0 ? totalGMV / totalUniqueCustomers : 0,
+          arpu: totalCustomerCount > 0 ? totalGMV / totalCustomerCount : 0,
+          orders_per_day: totalDays > 0 ? totalOrders / totalDays : 0,
+          orders_per_day_per_store: totalDays > 0 ? totalOrders / totalDays : 0, // Assuming single store for now
+          annual_customer_value: weightedAnnualCustomerValue,
+          purchase_frequency: weightedPurchaseFrequency,
+          category_penetration: weightedCategoryPenetration
+        };
+      })(),
       customers: customersData || [],
       time_window: {
         reference_date,
