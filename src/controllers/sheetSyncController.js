@@ -13,6 +13,73 @@ const oauth2Client = new OAuth2Client(
   process.env.GOOGLE_REDIRECT_URI
 );
 
+// Function to refresh Google access token
+const refreshGoogleToken = async (refreshToken) => {
+  try {
+    oauth2Client.setCredentials({
+      refresh_token: refreshToken
+    });
+
+    const { credentials } = await oauth2Client.refreshAccessToken();
+    
+    return {
+      access_token: credentials.access_token,
+      expiry_date: credentials.expiry_date
+    };
+  } catch (error) {
+    logger.error('Error refreshing Google token', {
+      error: error.message,
+      stack: error.stack
+    });
+    throw new Error('Failed to refresh Google access token');
+  }
+};
+
+// Function to check and refresh token if needed
+const ensureValidToken = async (tokenData) => {
+  try {
+    // Check if token is expired or will expire in the next 5 minutes
+    const isExpired = tokenData.expiry_date && 
+      (tokenData.expiry_date - 5 * 60 * 1000) < Date.now();
+
+    if (isExpired) {
+      const newTokenData = await refreshGoogleToken(tokenData.refresh_token);
+      
+      // Update token in database
+      const supabase = getSupabase();
+      const { error: updateError } = await supabase
+        .from('google_tokens')
+        .update({
+          access_token: newTokenData.access_token,
+          expiry_date: newTokenData.expiry_date
+        })
+        .eq('user_id', tokenData.user_id);
+
+      if (updateError) {
+        logger.error('Error updating refreshed token', {
+          error: updateError.message,
+          user_id: tokenData.user_id
+        });
+        throw new Error('Failed to update refreshed token');
+      }
+
+      return {
+        ...tokenData,
+        access_token: newTokenData.access_token,
+        expiry_date: newTokenData.expiry_date
+      };
+    }
+
+    return tokenData;
+  } catch (error) {
+    logger.error('Error in ensureValidToken', {
+      error: error.message,
+      stack: error.stack
+    });
+    throw error;
+  }
+};
+
 // Get available segments for a business
 const getAvailableSegments = async (req, res) => {
   const user = req.user;
@@ -74,7 +141,7 @@ const getAvailableSegments = async (req, res) => {
 // Sync segment to Google Sheets
 const syncSegmentToSheet = async (req, res) => {
   const user = req.user;
-  const { segment_id, sheet_id, sheet_name, create_new } = req.body;
+  const { segment_id, sheet_url, new_file_name, create_new } = req.body;
 
   // Convert create_new to boolean if it's a string
   const shouldCreateNew = create_new === true || create_new === 'true';
@@ -82,8 +149,8 @@ const syncSegmentToSheet = async (req, res) => {
   logger.info('Syncing segment to Google Sheets', {
     user_id: user?.user_id,
     segment_id,
-    sheet_id,
-    sheet_name,
+    sheet_url,
+    new_file_name,
     create_new: shouldCreateNew
   });
 
@@ -95,11 +162,11 @@ const syncSegmentToSheet = async (req, res) => {
     });
   }
 
-  if (!segment_id || (!sheet_id && !shouldCreateNew)) {
-    logger.warn('Missing required parameters', { segment_id, sheet_id, shouldCreateNew });
+  if (!segment_id || (!sheet_url && !shouldCreateNew)) {
+    logger.warn('Missing required parameters', { segment_id, sheet_url, shouldCreateNew });
     return res.status(400).json({
       success: false,
-      error: "Segment ID and either sheet ID or create_new flag are required"
+      error: "Segment ID and either sheet URL or create_new flag are required"
     });
   }
 
@@ -154,23 +221,24 @@ const syncSegmentToSheet = async (req, res) => {
       throw new Error('Google account not connected');
     }
 
+    // Ensure token is valid
+    const validTokenData = await ensureValidToken(tokenData);
+
     // Set up OAuth2 client with tokens
     oauth2Client.setCredentials({
-      access_token: tokenData.access_token,
-      refresh_token: tokenData.refresh_token
+      access_token: validTokenData.access_token,
+      refresh_token: validTokenData.refresh_token
     });
 
-    let targetSheetId = sheet_id;
-    let targetSheetName = sheet_name || 'Sheet1';
+    let targetSheetId;
     const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
     // If creating new file
     if (shouldCreateNew) {
-      const drive = google.drive({ version: 'v3', auth: oauth2Client });
-      
-      // Create new spreadsheet
+      // Create new spreadsheet with custom name or default name
       const fileMetadata = {
-        name: `${segment.segment_name} - Customer Segment`,
+        name: new_file_name || `${segment.segment_name} - Customer Segment`,
         mimeType: 'application/vnd.google-apps.spreadsheet'
       };
 
@@ -180,47 +248,54 @@ const syncSegmentToSheet = async (req, res) => {
       });
 
       targetSheetId = file.data.id;
+    } else {
+      // Extract Sheet ID from URL
+      const sheetIdMatch = sheet_url.match(/\/d\/([a-zA-Z0-9-_]+)/);
+      if (!sheetIdMatch) {
+        throw new Error('Invalid Google Sheets URL format');
+      }
+      targetSheetId = sheetIdMatch[1];
+    }
 
-      // Rename the default sheet to the specified name or "Sheet1"
+    // Use segment name as sheet name
+    const sheetName = segment.segment_name;
+
+    // Check if sheet exists in the file
+    const spreadsheet = await sheets.spreadsheets.get({
+      spreadsheetId: targetSheetId,
+      fields: 'sheets.properties'
+    });
+
+    const existingSheets = spreadsheet.data.sheets.map(sheet => sheet.properties.title);
+    
+    if (existingSheets.includes(sheetName)) {
+      // If sheet exists, delete it first
+      const sheetId = spreadsheet.data.sheets.find(s => s.properties.title === sheetName).properties.sheetId;
       await sheets.spreadsheets.batchUpdate({
         spreadsheetId: targetSheetId,
         requestBody: {
           requests: [{
-            updateSheetProperties: {
-              properties: {
-                sheetId: 0, // First sheet
-                title: targetSheetName
-              },
-              fields: 'title'
+            deleteSheet: {
+              sheetId: sheetId
             }
           }]
         }
       });
-    } else {
-      // Check if sheet exists in the file
-      const spreadsheet = await sheets.spreadsheets.get({
-        spreadsheetId: targetSheetId,
-        fields: 'sheets.properties'
-      });
-
-      const existingSheets = spreadsheet.data.sheets.map(sheet => sheet.properties.title);
-      
-      if (!existingSheets.includes(targetSheetName)) {
-        // Create new sheet if it doesn't exist
-        await sheets.spreadsheets.batchUpdate({
-          spreadsheetId: targetSheetId,
-          requestBody: {
-            requests: [{
-              addSheet: {
-                properties: {
-                  title: targetSheetName
-                }
-              }
-            }]
-          }
-        });
-      }
     }
+
+    // Create new sheet with segment name
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: targetSheetId,
+      requestBody: {
+        requests: [{
+          addSheet: {
+            properties: {
+              title: sheetName
+            }
+          }
+        }]
+      }
+    });
 
     // Prepare data for Google Sheets
     const values = [
@@ -258,7 +333,7 @@ const syncSegmentToSheet = async (req, res) => {
     await sheets.spreadsheets.values.update({
       auth: oauth2Client,
       spreadsheetId: targetSheetId,
-      range: `${targetSheetName}!A1`,
+      range: `${sheetName}!A1`,
       valueInputOption: 'RAW',
       requestBody: {
         values
@@ -306,7 +381,7 @@ const syncSegmentToSheet = async (req, res) => {
       message: "Segment successfully synced to Google Sheets",
       data: {
         sheet_id: targetSheetId,
-        sheet_name: sheet_name || 'Sheet1',
+        sheet_name: sheetName,
         customer_count: customers.length
       }
     });
@@ -326,7 +401,7 @@ const syncSegmentToSheet = async (req, res) => {
           user_id: user.user_id,
           business_id: user.business_id,
           segment_id,
-          sheet_id,
+          sheet_id: targetSheetId,
           status: 'failed',
           error_message: error.message,
           created_at: new Date().toISOString()
@@ -398,8 +473,93 @@ const getSyncHistory = async (req, res) => {
   }
 };
 
+// Test token refresh
+const testTokenRefresh = async (req, res) => {
+  const user = req.user;
+
+  logger.info('Testing token refresh', {
+    user_id: user?.user_id
+  });
+
+  if (!user || !user.user_id) {
+    logger.warn('User authentication missing', { user });
+    return res.status(400).json({
+      success: false,
+      error: "User authentication required"
+    });
+  }
+
+  try {
+    const supabase = getSupabase();
+
+    // Get current token data
+    const { data: tokenData, error: tokenError } = await supabase
+      .from('google_tokens')
+      .select('*')
+      .eq('user_id', user.user_id)
+      .single();
+
+    if (tokenError || !tokenData) {
+      throw new Error('Google account not connected');
+    }
+
+    // Get new token data
+    const newTokenData = await refreshGoogleToken(tokenData.refresh_token);
+
+    // Format expiry date for database
+    const expiryDate = new Date(newTokenData.expiry_date);
+    const formattedExpiryDate = expiryDate.toISOString().replace('T', ' ').replace('Z', '');
+
+    // Update token in database
+    const { error: updateError } = await supabase
+      .from('google_tokens')
+      .update({
+        access_token: newTokenData.access_token,
+        expiry_date: formattedExpiryDate,
+        updated_at: new Date().toISOString().replace('T', ' ').replace('Z', '')
+      })
+      .eq('user_id', user.user_id);
+
+    if (updateError) {
+      logger.error('Error updating token', {
+        error: updateError.message,
+        user_id: user.user_id
+      });
+      throw new Error('Failed to update refreshed token');
+    }
+
+    res.json({
+      success: true,
+      message: "Token refreshed successfully",
+      data: {
+        old_token: {
+          access_token: tokenData.access_token,
+          expiry_date: tokenData.expiry_date
+        },
+        new_token: {
+          access_token: newTokenData.access_token,
+          expiry_date: formattedExpiryDate
+        }
+      }
+    });
+  } catch (error) {
+    logger.error('Error in test token refresh', {
+      error: error.message,
+      stack: error.stack,
+      user_id: user?.user_id
+    });
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
 export {
   getAvailableSegments,
   syncSegmentToSheet,
-  getSyncHistory
+  getSyncHistory,
+  refreshGoogleToken,
+  ensureValidToken,
+  testTokenRefresh
 }; 

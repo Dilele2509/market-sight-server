@@ -3,7 +3,8 @@ import { authenticationToken } from '../controllers/authController.js';
 import {
   getAvailableSegments,
   syncSegmentToSheet,
-  getSyncHistory
+  getSyncHistory,
+  testTokenRefresh
 } from '../controllers/sheetSyncController.js';
 
 const router = express.Router();
@@ -16,5 +17,8 @@ router.post('/sync', authenticationToken, syncSegmentToSheet);
 
 // Get sync history
 router.get('/sync/history', authenticationToken, getSyncHistory);
+
+// Test token refresh
+router.post('/sync/test-refresh', authenticationToken, testTokenRefresh);
 
 export default router; 
