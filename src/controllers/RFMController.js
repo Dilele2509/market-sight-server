@@ -377,16 +377,65 @@ const getRFMSegmentStatistics = async (req, res) => {
         customer_count: 0,
         percentage: 0,
         total_monetary: 0,
-        avg_recency: 0,
-        avg_frequency: 0,
-        avg_monetary: 0
+        recency_value: 0,
+        frequency_value: 0,
+        monetary_value: 0,
+        r_score: 0,
+        f_score: 0,
+        m_score: 0
       };
     });
+
+    // Calculate average RFM scores for each segment
+    const segmentRFMScores = await Promise.all(completeStats.map(async (stat) => {
+      if (stat.customer_count === 0) return stat;
+
+      const { data: rfmScores, error: rfmError } = await supabase
+        .from('rfm_scores')
+        .select('recency_value, frequency_value, monetary_value, r_score, f_score, m_score')
+        .eq('business_id', business_id)
+        .eq('segment', stat.segment);
+
+      if (rfmError) {
+        logger.error('Error fetching RFM scores for segment', { 
+          error: rfmError,
+          segment: stat.segment 
+        });
+        return stat;
+      }
+
+      if (rfmScores && rfmScores.length > 0) {
+        const totalCustomers = rfmScores.length;
+        
+        // Calculate averages
+        const avgRecencyValue = rfmScores.reduce((sum, score) => sum + (score.recency_value || 0), 0) / totalCustomers;
+        const avgFrequencyValue = rfmScores.reduce((sum, score) => sum + (score.frequency_value || 0), 0) / totalCustomers;
+        const avgMonetaryValue = rfmScores.reduce((sum, score) => sum + (Number(score.monetary_value) || 0), 0) / totalCustomers;
+        const avgRScore = rfmScores.reduce((sum, score) => sum + (score.r_score || 0), 0) / totalCustomers;
+        const avgFScore = rfmScores.reduce((sum, score) => sum + (score.f_score || 0), 0) / totalCustomers;
+        const avgMScore = rfmScores.reduce((sum, score) => sum + (score.m_score || 0), 0) / totalCustomers;
+
+        return {
+          segment: stat.segment,
+          customer_count: stat.customer_count,
+          percentage: stat.percentage,
+          total_monetary: stat.total_monetary,
+          recency_value: Math.round(avgRecencyValue),
+          frequency_value: Math.round(avgFrequencyValue),
+          monetary_value: Number(avgMonetaryValue.toFixed(2)),
+          r_score: Math.round(avgRScore),
+          f_score: Math.round(avgFScore),
+          m_score: Math.round(avgMScore)
+        };
+      }
+
+      return stat;
+    }));
     
     logger.info('RFM segment statistics retrieved successfully');
     return res.status(200).json({
       success: true,
-      data: completeStats
+      data: segmentRFMScores
     });
     
   } catch (error) {
