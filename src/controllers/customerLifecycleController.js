@@ -77,9 +77,9 @@ const getNewCustomersMetrics = async (req, res) => {
       });
     }
 
-    // Get metrics using the RPC function with new parameters
+    // Get metrics using the RPC function
     const { data: metricsData, error: metricsError } = await supabase.rpc('get_new_customers_metrics', {
-      p_business_id: Number(userData.business_id),
+      p_business_id: userData.business_id,
       p_start_date: startDate.toISOString().split('T')[0],
       p_end_date: endDate.toISOString().split('T')[0]
     });
@@ -96,7 +96,7 @@ const getNewCustomersMetrics = async (req, res) => {
 
     // Get detailed customer information
     const { data: customersData, error: customersError } = await supabase.rpc('get_detailed_new_customers_info', {
-      p_business_id: Number(userData.business_id),
+      p_business_id: userData.business_id,
       p_start_date: startDate.toISOString().split('T')[0],
       p_end_date: endDate.toISOString().split('T')[0]
     });
@@ -109,66 +109,205 @@ const getNewCustomersMetrics = async (req, res) => {
       throw customersError;
     }
 
-    if (!metricsData || metricsData.length === 0) {
-      logger.warn('No data returned from metrics function', {
-        business_id: userData.business_id,
-        start_date,
-        end_date
-      });
-      return res.json({
-        success: true,
-        data: {
-          segment: "New Customers",
-          metrics: [],
-          customers: [],
-          time_window: {
-            start_date,
-            end_date,
-            is_monthly_breakdown: false
-          }
-        }
-      });
+    // Generate all months in range
+    const months = [];
+    let isMonthlyBreakdown = false;
+
+    // Tính khoảng cách tháng chính xác hơn
+    function getMonthDiff(startDate, endDate) {
+      const startMonth = startDate.getMonth();
+      const endMonth = endDate.getMonth();
+      const startYear = startDate.getFullYear();
+      const endYear = endDate.getFullYear();
+      const startDay = startDate.getDate();
+      const endDay = endDate.getDate();
+      
+      // Nếu không phải ngày đầu tiên của tháng, tính khoảng cách khác
+      if (startDay === 1 && endDay === 1 && 
+          (endMonth - startMonth === 1 || (endMonth === 0 && startMonth === 11 && endYear - startYear === 1))) {
+        // Trường hợp đặc biệt: từ ngày 1 tháng này đến ngày 1 tháng sau (ví dụ 01/04 đến 01/05) 
+        // => đúng 1 tháng => không breakdown
+        return 1;
+      }
+      
+      let months = (endYear - startYear) * 12 + (endMonth - startMonth);
+      
+      // Điều chỉnh khoảng cách dựa trên ngày
+      if (endDay < startDay) {
+        months -= 1; // Nếu ngày cuối nhỏ hơn ngày đầu, không phải là tròn tháng
+      }
+      
+      return months;
     }
 
-    // Format the response with period breakdown
-    const response = {
-      segment: "New Customers",
-      metrics: metricsData.map(period => ({
+    const monthDiff = getMonthDiff(startDate, endDate);
+
+    logger.info('Time period calculation:', {
+      start_date: startDate.toISOString(),
+      end_date: endDate.toISOString(),
+      start_day: startDate.getDate(),
+      end_day: endDate.getDate(),
+      calculated_month_diff: monthDiff
+    });
+
+    // Trường hợp 1 và 3: Không cần breakdown theo tháng (thời gian <= 1 tháng)
+    if (monthDiff <= 1) {
+      months.push({
+        period_start: startDate.toISOString().split('T')[0],
+        period_end: endDate.toISOString().split('T')[0]
+      });
+    } 
+    // Trường hợp 2: Cần breakdown theo tháng (thời gian > 1 tháng)
+    else {
+      isMonthlyBreakdown = true;
+      const currentDate = new Date(startDate);
+      
+      // Tháng đầu tiên: từ start_date đến cuối tháng
+      const firstMonthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+      months.push({
+        period_start: startDate.toISOString().split('T')[0],
+        period_end: firstMonthEnd.toISOString().split('T')[0]
+      });
+      
+      // Di chuyển đến ngày đầu tiên của tháng tiếp theo
+      currentDate.setDate(1);
+      currentDate.setMonth(currentDate.getMonth() + 1);
+      
+      // Các tháng giữa: từ đầu tháng đến cuối tháng
+      while (currentDate.getMonth() < endDate.getMonth() || 
+             currentDate.getFullYear() < endDate.getFullYear()) {
+        const monthStart = new Date(currentDate);
+        const monthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+        
+        months.push({
+          period_start: monthStart.toISOString().split('T')[0],
+          period_end: monthEnd.toISOString().split('T')[0]
+        });
+        
+        currentDate.setMonth(currentDate.getMonth() + 1);
+      }
+      
+      // Tháng cuối cùng: từ đầu tháng đến end_date
+      if (currentDate.getMonth() === endDate.getMonth() && 
+          currentDate.getFullYear() === endDate.getFullYear()) {
+        months.push({
+          period_start: currentDate.toISOString().split('T')[0],
+          period_end: endDate.toISOString().split('T')[0]
+        });
+      }
+    }
+
+    logger.info('Generated time periods:', {
+      is_monthly_breakdown: isMonthlyBreakdown,
+      periods: months,
+      month_diff: monthDiff
+    });
+
+    // Create metrics data with default values for all months
+    const metricsWithDefaults = months.map(month => {
+      // Tìm dữ liệu chính xác trong kết quả từ RPC
+      const exactMatch = metricsData?.find(m => 
+        m.period_start === month.period_start && 
+        m.period_end === month.period_end
+      );
+      
+      // Nếu có dữ liệu chính xác thì sử dụng
+      if (exactMatch) {
+        logger.info('Found exact match for period:', {
+          period: {
+            start: month.period_start,
+            end: month.period_end
+          },
+          data: {
+            customer_count: exactMatch.customer_count,
+            gmv: exactMatch.gmv
+          }
+        });
+        
+        return {
+          period: {
+            start_date: month.period_start,
+            end_date: month.period_end
+          },
+          values: {
+            customer_count: Number(exactMatch.customer_count || 0),
+            gmv: Number(exactMatch.gmv || 0),
+            orders: Number(exactMatch.orders || 0),
+            unique_customers: Number(exactMatch.unique_customers || 0),
+            aov: Number(exactMatch.aov || 0),
+            avg_bill_per_user: Number(exactMatch.avg_bill_per_user || 0),
+            arpu: Number(exactMatch.arpu || 0),
+            orders_per_day: Number(exactMatch.orders_per_day || 0),
+            orders_per_day_per_store: Number(exactMatch.orders_per_day_per_store || 0),
+            first_purchase_gmv: Number(exactMatch.first_purchase_gmv || 0),
+            avg_first_purchase_value: Number(exactMatch.avg_first_purchase_value || 0),
+            conversion_to_second_purchase_rate: Number(exactMatch.conversion_to_second_purchase_rate || 0)
+          }
+        };
+      }
+      
+      // Nếu không tìm thấy dữ liệu chính xác, trả về giá trị mặc định
+      logger.info('No exact match found for period:', {
         period: {
-          start_date: period.period_start,
-          end_date: period.period_end
+          start: month.period_start,
+          end: month.period_end
+        }
+      });
+      
+      return {
+        period: {
+          start_date: month.period_start,
+          end_date: month.period_end
         },
         values: {
-          customer_count: Number(period.customer_count || 0),
-          gmv: Number(period.gmv || 0),
-          orders: Number(period.orders || 0),
-          unique_customers: Number(period.unique_customers || 0),
-          aov: Number(period.aov || 0),
-          avg_bill_per_user: Number(period.avg_bill_per_user || 0),
-          arpu: Number(period.arpu || 0),
-          orders_per_day: Number(period.orders_per_day || 0),
-          orders_per_day_per_store: Number(period.orders_per_day_per_store || 0),
-          first_purchase_gmv: Number(period.first_purchase_gmv || 0),
-          avg_first_purchase_value: Number(period.avg_first_purchase_value || 0),
-          conversion_to_second_purchase_rate: Number(period.conversion_to_second_purchase_rate || 0)
+          customer_count: 0,
+          gmv: 0,
+          orders: 0,
+          unique_customers: 0,
+          aov: 0,
+          avg_bill_per_user: 0,
+          arpu: 0,
+          orders_per_day: 0,
+          orders_per_day_per_store: 0,
+          first_purchase_gmv: 0,
+          avg_first_purchase_value: 0,
+          conversion_to_second_purchase_rate: 0
         }
-      })),
+      };
+    });
+
+    logger.info('Final metrics data:', {
+      is_monthly_breakdown: isMonthlyBreakdown,
+      metrics_count: metricsWithDefaults.length,
+      metrics_data: metricsData ? metricsData.length : 0,
+      periods: metricsWithDefaults.map(m => ({ 
+        start: m.period.start_date, 
+        end: m.period.end_date,
+        customer_count: m.values.customer_count
+      }))
+    });
+
+    // Format the response
+    const response = {
+      segment: "New Customers",
+      metrics: metricsWithDefaults,
       aggregated_metrics: (() => {
         // Calculate total values across all periods
-        const totalGMV = metricsData.reduce((sum, period) => sum + Number(period.gmv || 0), 0);
-        const totalOrders = metricsData.reduce((sum, period) => sum + Number(period.orders || 0), 0);
-        const totalUniqueCustomers = metricsData.reduce((sum, period) => sum + Number(period.unique_customers || 0), 0);
-        const totalCustomerCount = metricsData.reduce((sum, period) => sum + Number(period.customer_count || 0), 0);
-        const totalFirstPurchaseGMV = metricsData.reduce((sum, period) => sum + Number(period.first_purchase_gmv || 0), 0);
+        const totalGMV = metricsWithDefaults.reduce((sum, period) => sum + Number(period.values.gmv || 0), 0);
+        const totalOrders = metricsWithDefaults.reduce((sum, period) => sum + Number(period.values.orders || 0), 0);
+        const totalUniqueCustomers = metricsWithDefaults.reduce((sum, period) => sum + Number(period.values.unique_customers || 0), 0);
+        const totalCustomerCount = metricsWithDefaults.reduce((sum, period) => sum + Number(period.values.customer_count || 0), 0);
+        const totalFirstPurchaseGMV = metricsWithDefaults.reduce((sum, period) => sum + Number(period.values.first_purchase_gmv || 0), 0);
         
         // Calculate total days in the time range
         const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
 
         // Calculate weighted averages for metrics that need it
-        const weightedConversionRate = metricsData.reduce((sum, period) => {
-          const weight = Number(period.customer_count || 0);
-          return sum + (Number(period.conversion_to_second_purchase_rate || 0) * weight);
-        }, 0) / (totalCustomerCount || 1);
+        const weightedConversionRate = totalCustomerCount > 0 ? 
+          metricsWithDefaults.reduce((sum, period) => {
+            const weight = Number(period.values.customer_count || 0);
+            return sum + (Number(period.values.conversion_to_second_purchase_rate || 0) * weight);
+          }, 0) / totalCustomerCount : 0;
 
         return {
           gmv: totalGMV,
@@ -222,9 +361,9 @@ const getNewCustomersMetrics = async (req, res) => {
         }
       })) : [],
       time_window: {
-        start_date,
-        end_date,
-        is_monthly_breakdown: metricsData.length > 1
+        start_date: startDate.toISOString().split('T')[0],
+        end_date: endDate.toISOString().split('T')[0],
+        is_monthly_breakdown: isMonthlyBreakdown
       }
     };
 
