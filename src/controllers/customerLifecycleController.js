@@ -158,11 +158,18 @@ const getNewCustomersMetrics = async (req, res) => {
         const totalOrders = metricsData.reduce((sum, period) => sum + Number(period.orders || 0), 0);
         const totalUniqueCustomers = metricsData.reduce((sum, period) => sum + Number(period.unique_customers || 0), 0);
         const totalCustomerCount = metricsData.reduce((sum, period) => sum + Number(period.customer_count || 0), 0);
+        const totalFirstPurchaseGMV = metricsData.reduce((sum, period) => sum + Number(period.first_purchase_gmv || 0), 0);
         
         // Calculate total days in the time range
         const startDate = new Date(metricsData[0]?.period_start);
         const endDate = new Date(metricsData[metricsData.length - 1]?.period_end);
         const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+
+        // Calculate weighted averages for metrics that need it
+        const weightedConversionRate = metricsData.reduce((sum, period) => {
+          const weight = Number(period.customer_count || 0);
+          return sum + (Number(period.conversion_to_second_purchase_rate || 0) * weight);
+        }, 0) / (totalCustomerCount || 1);
 
         return {
           gmv: totalGMV,
@@ -172,7 +179,10 @@ const getNewCustomersMetrics = async (req, res) => {
           avg_bill_per_user: totalUniqueCustomers > 0 ? totalGMV / totalUniqueCustomers : 0,
           arpu: totalCustomerCount > 0 ? totalGMV / totalCustomerCount : 0,
           orders_per_day: totalDays > 0 ? totalOrders / totalDays : 0,
-          orders_per_day_per_store: totalDays > 0 ? totalOrders / totalDays : 0 // Assuming single store for now
+          orders_per_day_per_store: totalDays > 0 ? totalOrders / totalDays : 0, // Assuming single store for now
+          first_purchase_gmv: totalFirstPurchaseGMV,
+          avg_first_purchase_value: totalCustomerCount > 0 ? totalFirstPurchaseGMV / totalCustomerCount : 0,
+          conversion_to_second_purchase_rate: weightedConversionRate
         };
       })(),
       customers: customersData || [],
@@ -372,6 +382,11 @@ const getEarlyLifeCustomersMetrics = async (req, res) => {
           return sum + (Number(period.avg_time_between_purchases || 0) * weight);
         }, 0) / (totalOrders || 1);
 
+        const weightedAvgOrderValue = metricsData.reduce((sum, period) => {
+          const weight = Number(period.orders || 0);
+          return sum + (Number(period.avg_order_value || 0) * weight);
+        }, 0) / (totalOrders || 1);
+
         return {
           gmv: totalGMV,
           orders: totalOrders,
@@ -383,7 +398,7 @@ const getEarlyLifeCustomersMetrics = async (req, res) => {
           orders_per_day_per_store: totalDays > 0 ? totalOrders / totalDays : 0, // Assuming single store for now
           repeat_purchase_rate: weightedRepeatPurchaseRate,
           avg_time_between_purchases: weightedAvgTimeBetweenPurchases,
-          avg_order_value: totalOrders > 0 ? totalGMV / totalOrders : 0
+          avg_order_value: weightedAvgOrderValue
         };
       })(),
       customers: customersData || [],
