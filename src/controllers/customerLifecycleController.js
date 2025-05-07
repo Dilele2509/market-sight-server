@@ -1174,7 +1174,32 @@ const getToplineMetricsBreakdown = async (req, res) => {
       return res.json({
         success: true,
         data: {
-          metrics: [],
+          metrics: [{
+            period: {
+              start_date: startDate.toISOString().split('T')[0],
+              end_date: endDate.toISOString().split('T')[0]
+            },
+            values: {
+              gmv: 0,
+              orders: 0,
+              unique_customers: 0,
+              aov: 0,
+              avg_bill_per_user: 0,
+              arpu: 0,
+              orders_per_day: 0,
+              orders_per_day_per_store: 0
+            },
+            changes: {
+              gmv: 0,
+              orders: 0,
+              unique_customers: 0,
+              aov: 0,
+              avg_bill_per_user: 0,
+              arpu: 0,
+              orders_per_day: 0,
+              orders_per_day_per_store: 0
+            }
+          }],
           is_monthly_breakdown: false,
           time_window: {
             start_date,
@@ -1281,16 +1306,6 @@ const getCustomerStageMonthlyBreakdown = async (req, res) => {
       });
     }
 
-    // Validate reference_date is not in future
-    const today = new Date();
-    // today.setHours(0, 0, 0, 0);
-    if (referenceDate > today) {
-      return res.status(400).json({
-        success: false,
-        error: "Reference date cannot be in the future"
-      });
-    }
-
     const supabase = getSupabase();
     
     // Get business_id
@@ -1311,15 +1326,20 @@ const getCustomerStageMonthlyBreakdown = async (req, res) => {
       });
     }
 
+    // Calculate date range based on calendar months
+    const endDate = new Date(referenceDate);
+    const startDate = new Date(referenceDate);
+    
+    // Set end date to the reference date
+    endDate.setHours(0, 0, 0, 0);
+    
+    // Set start date to first day of the month that is 'timeRange' months before reference date
+    startDate.setMonth(startDate.getMonth() - timeRange);
+    startDate.setDate(1); // Always start from the 1st of the month
+    startDate.setHours(0, 0, 0, 0);
+
     // Format date for RPC call
     const formattedReferenceDate = referenceDate.toISOString().split('T')[0];
-
-    // Log RPC call parameters
-    logger.info('Calling get_customer_stage_monthly_breakdown with params:', {
-      p_business_id: Number(userData.business_id),
-      p_reference_date: formattedReferenceDate,
-      p_time_range: timeRange
-    });
 
     // Get monthly breakdown using the RPC function
     const { data: breakdownData, error: breakdownError } = await supabase.rpc(
@@ -1347,45 +1367,70 @@ const getCustomerStageMonthlyBreakdown = async (req, res) => {
       });
     }
 
-    if (!breakdownData || breakdownData.length === 0) {
-      logger.warn('No data returned from breakdown function', {
-        business_id: userData.business_id,
-        reference_date: formattedReferenceDate,
-        time_range: timeRange
+    // Initialize monthly data structure for all months in range
+    const monthlyData = {};
+    const currentDate = new Date(startDate);
+    
+    // Define the standardized stage keys we want to use
+    const stageKeys = ["New", "Early-life", "Mature", "Loyal"];
+    
+    // Create structure for each month in the range
+    while (currentDate <= endDate) {
+      const monthStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+      // For the last month, use reference date as end date if it's not the last day of the month
+      const isLastMonth = currentDate.getMonth() === endDate.getMonth() && 
+                         currentDate.getFullYear() === endDate.getFullYear();
+      const monthEnd = isLastMonth ? endDate : new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+      const monthKey = monthStart.toISOString().split('T')[0];
+      
+      monthlyData[monthKey] = {
+        period: {
+          start_date: monthStart.toISOString().split('T')[0],
+          end_date: monthEnd.toISOString().split('T')[0]
+        },
+        stages: {}
+      };
+      
+      // Initialize all stage values
+      stageKeys.forEach(stage => {
+        monthlyData[monthKey].stages[stage] = { 
+          customer_count: 0, 
+          metrics: {}
+        };
       });
-      return res.json({
-        success: true,
-        data: {
-          monthly_breakdown: [],
-          time_window: {
-            reference_date: formattedReferenceDate,
-            time_range: timeRange
+      
+      currentDate.setMonth(currentDate.getMonth() + 1);
+    }
+
+    // Map returned data to standardized stage names
+    const stageNameMapping = {
+      "New Customers": "New",
+      "Early Life Customers": "Early-life",
+      "Mature Customers": "Mature", 
+      "Loyal Customers": "Loyal"
+    };
+
+    if (breakdownData && breakdownData.length > 0) {
+      breakdownData.forEach(record => {
+        // Get the first day of the month for this record
+        const recordDate = new Date(record.month_start);
+        const monthStart = new Date(recordDate.getFullYear(), recordDate.getMonth(), 1);
+        const monthKey = monthStart.toISOString().split('T')[0];
+        
+        if (monthlyData[monthKey]) {
+          // Map the stage name if needed
+          const stageName = stageNameMapping[record.stage] || record.stage;
+          
+          // Only use the stage if it's one of our defined stages
+          if (stageKeys.includes(stageName)) {
+            monthlyData[monthKey].stages[stageName] = {
+              customer_count: record.customer_count || 0,
+              metrics: record.metrics || {}
+            };
           }
         }
       });
     }
-
-    // Format the response by grouping data by month
-    const monthlyData = breakdownData.reduce((acc, record) => {
-      const monthKey = record.month_start;
-      if (!acc[monthKey]) {
-        acc[monthKey] = {
-          period: {
-            start_date: record.month_start,
-            end_date: record.month_end
-          },
-          stages: {}
-        };
-      }
-      
-      // Add stage data
-      acc[monthKey].stages[record.stage] = {
-        customer_count: record.customer_count,
-        metrics: record.metrics
-      };
-
-      return acc;
-    }, {});
 
     // Convert to array and sort by month
     const formattedData = Object.values(monthlyData).sort((a, b) => 
@@ -1396,7 +1441,13 @@ const getCustomerStageMonthlyBreakdown = async (req, res) => {
       monthly_breakdown: formattedData,
       time_window: {
         reference_date: formattedReferenceDate,
-        time_range: timeRange
+        time_range: timeRange,
+        start_date: startDate.toISOString().split('T')[0],
+        end_date: endDate.toISOString().split('T')[0],
+        calendar_months: {
+          start_month: startDate.toISOString().split('T')[0].substring(0, 7),
+          end_month: endDate.toISOString().split('T')[0].substring(0, 7)
+        }
       }
     };
 
