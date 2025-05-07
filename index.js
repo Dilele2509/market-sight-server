@@ -5,7 +5,7 @@ import userRoutes from './src/routes/userRoutes.js';
 import dataRoutes from './src/routes/dataRoutes.js';
 import segmentRoutes from './src/routes/segmentRoutes.js';
 import customerLifecycleRoutes from './src/routes/customerLifecycleRoutes.js';
-import RFMRoutes from './src/routes/RFMRoutes.js';
+import rfmRoutes from './src/routes/RFMRoutes.js';
 import sheetSyncRoutes from './src/routes/sheetSyncRoutes.js';
 import googleAuthRoutes from './src/routes/googleAuthRoutes.js';
 import businessRoutes from './src/routes/businessRoutes.js';
@@ -32,11 +32,10 @@ app.use('/api/', userRoutes);
 app.use('/api/', dataRoutes);
 app.use('/api/', segmentRoutes);
 app.use('/api/', customerLifecycleRoutes);
-app.use('/api/', RFMRoutes);
+app.use('/api/', rfmRoutes);
 app.use('/api/', sheetSyncRoutes)
 app.use('/api/', googleAuthRoutes); 
 app.use('/api/', businessRoutes)
-
 
 // Error handling middleware
 app.use((err, req, res, next) => {
