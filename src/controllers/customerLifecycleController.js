@@ -113,23 +113,6 @@ const getNewCustomersMetrics = async (req, res) => {
     const months = [];
     let isMonthlyBreakdown = false;
 
-    // Hàm tiện ích để lấy ngày cuối cùng của tháng
-    function getLastDayOfMonth(year, month) {
-      // JavaScript months are 0-based (0 = January, 11 = December)
-      // Tạo ngày 0 của tháng tiếp theo = ngày cuối cùng của tháng hiện tại
-      const lastDay = new Date(year, month + 1, 0);
-      // Format về 'YYYY-MM-DD'
-      return lastDay.toISOString().split('T')[0];
-    }
-
-    // Hàm tiện ích để lấy ngày đầu tiên của tháng
-    function getFirstDayOfMonth(year, month) {
-      // Tạo ngày 1 của tháng
-      const firstDay = new Date(year, month, 1);
-      // Format về 'YYYY-MM-DD'
-      return firstDay.toISOString().split('T')[0];
-    }
-
     // Tính khoảng cách tháng chính xác hơn
     function getMonthDiff(startDate, endDate) {
       // Tính số tháng giữa hai ngày
@@ -164,17 +147,6 @@ const getNewCustomersMetrics = async (req, res) => {
     }
 
     const monthDiff = getMonthDiff(startDate, endDate);
-
-    logger.info('Time period calculation:', {
-      start_date: startDate.toISOString(),
-      end_date: endDate.toISOString(),
-      start_day: startDate.getDate(),
-      end_day: endDate.getDate(),
-      start_month: startDate.getMonth() + 1,
-      end_month: endDate.getMonth() + 1,
-      calculated_month_diff: monthDiff
-    });
-
     // Trường hợp 1: Không cần breakdown theo tháng (thời gian <= 1 tháng hoặc cùng tháng)
     if (monthDiff === 0) {
       months.push({
@@ -182,97 +154,121 @@ const getNewCustomersMetrics = async (req, res) => {
         period_end: endDate.toISOString().split('T')[0]
       });
       
-      logger.info('Single period (no breakdown):', {
-        start_date: startDate.toISOString().split('T')[0],
-        end_date: endDate.toISOString().split('T')[0]
-      });
+    //   logger.info('Single period (no breakdown):', {
+    //     start_date: startDate.toISOString().split('T')[0],
+    //     end_date: endDate.toISOString().split('T')[0]
+    //   });
     } 
     // Trường hợp 2: Cần breakdown theo tháng (thời gian > 1 tháng)
     else {
       isMonthlyBreakdown = true;
       
-      // Get the year and month of the start and end dates
+      // Set up iterators for months
       let currentYear = startDate.getFullYear();
       let currentMonth = startDate.getMonth();
       const endYear = endDate.getFullYear();
       const endMonth = endDate.getMonth();
       
-      // Xử lý tháng đầu tiên (từ startDate đến cuối tháng đó)
-      let firstPeriodStart = startDate.toISOString().split('T')[0];
-      let firstPeriodEnd = getLastDayOfMonth(currentYear, currentMonth);
+      // Kiểm tra xem startDate và endDate có cùng tháng không
+      const isSameMonth = currentYear === endYear && currentMonth === endMonth;
+      // Step 1: Xử lý tháng đầu tiên (từ startDate đến cuối tháng hoặc endDate, tùy điều kiện)
+      const firstPeriodStart = startDate.toISOString().split('T')[0];
       
-      months.push({
-        period_start: firstPeriodStart,
-        period_end: firstPeriodEnd
-      });
-      
-      logger.info('First month calculation:', {
-        start_date: firstPeriodStart,
-        end_date: firstPeriodEnd,
-        month: currentMonth + 1,
-        year: currentYear
-      });
-      
-      // Tăng tháng lên để xử lý các tháng tiếp theo
-      currentMonth++;
-      if (currentMonth > 11) {
-        currentMonth = 0;
-        currentYear++;
+      // Nếu startDate và endDate cùng tháng, dùng endDate làm period_end
+      // Nếu khác tháng, dùng ngày cuối của tháng startDate
+      let firstPeriodEnd;
+      if (isSameMonth) {
+        firstPeriodEnd = endDate.toISOString().split('T')[0];
+      } else {
+        // Lấy ngày cuối cùng của tháng
+        const lastDayOfStartMonth = new Date(currentYear, currentMonth + 1, 0);
+        firstPeriodEnd = lastDayOfStartMonth.toISOString().split('T')[0];
       }
       
-      // Xử lý các tháng ở giữa (từ đầu đến cuối tháng)
-      while (
-        (currentYear < endYear) || 
-        (currentYear === endYear && currentMonth < endMonth)
-      ) {
-        const midPeriodStart = getFirstDayOfMonth(currentYear, currentMonth);
-        const midPeriodEnd = getLastDayOfMonth(currentYear, currentMonth);
-        
+      // Kiểm tra tính hợp lệ: startDate <= endDate
+      if (new Date(firstPeriodStart) <= new Date(firstPeriodEnd)) {
         months.push({
-          period_start: midPeriodStart,
-          period_end: midPeriodEnd
+          period_start: firstPeriodStart,
+          period_end: firstPeriodEnd
         });
-        
-        logger.info('Middle month calculation:', {
-          start_date: midPeriodStart,
-          end_date: midPeriodEnd,
-          month: currentMonth + 1,
-          year: currentYear
+      } else {
+        logger.warn('Invalid first period (start > end), skipping:', {
+          start: firstPeriodStart,
+          end: firstPeriodEnd
         });
-        
+      }
+      
+      // Nếu startDate và endDate cùng tháng, không cần xử lý tháng giữa và tháng cuối
+      if (!isSameMonth) {
         // Move to the next month
         currentMonth++;
         if (currentMonth > 11) {
           currentMonth = 0;
           currentYear++;
         }
-      }
-      
-      // Xử lý tháng cuối (từ đầu tháng đến endDate)
-      // Chỉ xử lý nếu tháng cuối cùng chưa được xử lý trong các tháng trước đó
-      if (currentYear === endYear && currentMonth === endMonth) {
-        const lastPeriodStart = getFirstDayOfMonth(endYear, endMonth);
-        const lastPeriodEnd = endDate.toISOString().split('T')[0];
         
-        months.push({
-          period_start: lastPeriodStart,
-          period_end: lastPeriodEnd
-        });
+        // Step 2: Xử lý các tháng giữa (từ đầu đến cuối tháng)
+        // Chỉ xử lý các tháng TRƯỚC tháng của endDate
+        while (
+          (currentYear < endYear) || 
+          (currentYear === endYear && currentMonth < endMonth)
+        ) {
+          // Tạo rõ ràng ngày 1 của tháng hiện tại
+          const monthFirstDay = new Date(currentYear, currentMonth, 1);
+          const midPeriodStart = monthFirstDay.toISOString().split('T')[0];
+          
+          // Tạo rõ ràng ngày cuối cùng của tháng hiện tại
+          const monthLastDay = new Date(currentYear, currentMonth + 1, 0);
+          const midPeriodEnd = monthLastDay.toISOString().split('T')[0];
+          
+          // Kiểm tra tính hợp lệ (thừa thãi vì đã đảm bảo logic tạo ngày đúng)
+          if (new Date(midPeriodStart) <= new Date(midPeriodEnd)) {
+            months.push({
+              period_start: midPeriodStart,
+              period_end: midPeriodEnd
+            });
+
+          } else {
+            logger.warn('Invalid middle period (start > end), skipping:', {
+              start: midPeriodStart,
+              end: midPeriodEnd
+            });
+          }
+          
+          // Move to the next month
+          currentMonth++;
+          if (currentMonth > 11) {
+            currentMonth = 0;
+            currentYear++;
+          }
+        }
         
-        logger.info('Last month calculation:', {
-          start_date: lastPeriodStart,
-          end_date: lastPeriodEnd,
-          month: endMonth + 1,
-          year: endYear
-        });
+        // Step 3: Xử lý tháng cuối (từ đầu tháng đến endDate)
+        // Chỉ xử lý nếu đã đến tháng cuối và chưa được xử lý
+        // Tạo rõ ràng ngày 1 của tháng cuối
+        if (currentYear === endYear && currentMonth === endMonth) {
+          const lastMonthFirstDay = new Date(endYear, endMonth, 1);
+          const lastPeriodStart = lastMonthFirstDay.toISOString().split('T')[0];
+          
+          const lastPeriodEnd = endDate.toISOString().split('T')[0];
+          
+          // Chỉ thêm nếu ngày 1 tháng cuối < endDate (tức là endDate không phải ngày 1)
+          if (new Date(lastPeriodStart) < new Date(lastPeriodEnd)) {
+            months.push({
+              period_start: lastPeriodStart,
+              period_end: lastPeriodEnd
+            });
+            
+          } else {
+            logger.info('Last month skipped (start date = end date):', {
+              start: lastPeriodStart,
+              end: lastPeriodEnd
+            });
+          }
+        }
       }
     }
 
-    logger.info('Generated time periods:', {
-      is_monthly_breakdown: isMonthlyBreakdown,
-      periods: months,
-      month_diff: monthDiff
-    });
 
     // Create metrics data with default values for all months
     const metricsWithDefaults = months.map(month => {
