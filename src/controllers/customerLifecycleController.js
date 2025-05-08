@@ -113,31 +113,54 @@ const getNewCustomersMetrics = async (req, res) => {
     const months = [];
     let isMonthlyBreakdown = false;
 
+    // Hàm tiện ích để lấy ngày cuối cùng của tháng
+    function getLastDayOfMonth(year, month) {
+      // JavaScript months are 0-based (0 = January, 11 = December)
+      // Tạo ngày 0 của tháng tiếp theo = ngày cuối cùng của tháng hiện tại
+      const lastDay = new Date(year, month + 1, 0);
+      // Format về 'YYYY-MM-DD'
+      return lastDay.toISOString().split('T')[0];
+    }
+
+    // Hàm tiện ích để lấy ngày đầu tiên của tháng
+    function getFirstDayOfMonth(year, month) {
+      // Tạo ngày 1 của tháng
+      const firstDay = new Date(year, month, 1);
+      // Format về 'YYYY-MM-DD'
+      return firstDay.toISOString().split('T')[0];
+    }
+
     // Tính khoảng cách tháng chính xác hơn
     function getMonthDiff(startDate, endDate) {
-      const startMonth = startDate.getMonth();
-      const endMonth = endDate.getMonth();
+      // Tính số tháng giữa hai ngày
       const startYear = startDate.getFullYear();
+      const startMonth = startDate.getMonth();
       const endYear = endDate.getFullYear();
-      const startDay = startDate.getDate();
-      const endDay = endDate.getDate();
+      const endMonth = endDate.getMonth();
       
-      // Nếu không phải ngày đầu tiên của tháng, tính khoảng cách khác
-      if (startDay === 1 && endDay === 1 && 
-          (endMonth - startMonth === 1 || (endMonth === 0 && startMonth === 11 && endYear - startYear === 1))) {
-        // Trường hợp đặc biệt: từ ngày 1 tháng này đến ngày 1 tháng sau (ví dụ 01/04 đến 01/05) 
-        // => đúng 1 tháng => không breakdown
-        return 1;
+      // Tính khoảng cách tháng cơ bản
+      const monthDiff = (endYear - startYear) * 12 + (endMonth - startMonth);
+      
+      // Nếu cùng tháng hoặc dưới 1 tháng
+      if (monthDiff === 0) {
+        return 0;
       }
       
-      let months = (endYear - startYear) * 12 + (endMonth - startMonth);
-      
-      // Điều chỉnh khoảng cách dựa trên ngày
-      if (endDay < startDay) {
-        months -= 1; // Nếu ngày cuối nhỏ hơn ngày đầu, không phải là tròn tháng
+      // Kiểm tra trường hợp chính xác 1 tháng
+      if (monthDiff === 1) {
+        const startDay = startDate.getDate();
+        // Ngày 1 của tháng kế tiếp từ startDate
+        const nextMonth = new Date(startDate);
+        nextMonth.setMonth(nextMonth.getMonth() + 1);
+        nextMonth.setDate(startDay);
+        
+        // Nếu endDate <= nextMonth thì coi là chưa đủ 1 tháng đầy đủ
+        if (endDate <= nextMonth) {
+          return 0;
+        }
       }
       
-      return months;
+      return monthDiff;
     }
 
     const monthDiff = getMonthDiff(startDate, endDate);
@@ -147,52 +170,100 @@ const getNewCustomersMetrics = async (req, res) => {
       end_date: endDate.toISOString(),
       start_day: startDate.getDate(),
       end_day: endDate.getDate(),
+      start_month: startDate.getMonth() + 1,
+      end_month: endDate.getMonth() + 1,
       calculated_month_diff: monthDiff
     });
 
-    // Trường hợp 1 và 3: Không cần breakdown theo tháng (thời gian <= 1 tháng)
-    if (monthDiff <= 1) {
+    // Trường hợp 1: Không cần breakdown theo tháng (thời gian <= 1 tháng hoặc cùng tháng)
+    if (monthDiff === 0) {
       months.push({
         period_start: startDate.toISOString().split('T')[0],
         period_end: endDate.toISOString().split('T')[0]
+      });
+      
+      logger.info('Single period (no breakdown):', {
+        start_date: startDate.toISOString().split('T')[0],
+        end_date: endDate.toISOString().split('T')[0]
       });
     } 
     // Trường hợp 2: Cần breakdown theo tháng (thời gian > 1 tháng)
     else {
       isMonthlyBreakdown = true;
-      const currentDate = new Date(startDate);
       
-      // Tháng đầu tiên: từ start_date đến cuối tháng
-      const firstMonthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+      // Get the year and month of the start and end dates
+      let currentYear = startDate.getFullYear();
+      let currentMonth = startDate.getMonth();
+      const endYear = endDate.getFullYear();
+      const endMonth = endDate.getMonth();
+      
+      // Xử lý tháng đầu tiên (từ startDate đến cuối tháng đó)
+      let firstPeriodStart = startDate.toISOString().split('T')[0];
+      let firstPeriodEnd = getLastDayOfMonth(currentYear, currentMonth);
+      
       months.push({
-        period_start: startDate.toISOString().split('T')[0],
-        period_end: firstMonthEnd.toISOString().split('T')[0]
+        period_start: firstPeriodStart,
+        period_end: firstPeriodEnd
       });
       
-      // Di chuyển đến ngày đầu tiên của tháng tiếp theo
-      currentDate.setDate(1);
-      currentDate.setMonth(currentDate.getMonth() + 1);
+      logger.info('First month calculation:', {
+        start_date: firstPeriodStart,
+        end_date: firstPeriodEnd,
+        month: currentMonth + 1,
+        year: currentYear
+      });
       
-      // Các tháng giữa: từ đầu tháng đến cuối tháng
-      while (currentDate.getMonth() < endDate.getMonth() || 
-             currentDate.getFullYear() < endDate.getFullYear()) {
-        const monthStart = new Date(currentDate);
-        const monthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
-        
-        months.push({
-          period_start: monthStart.toISOString().split('T')[0],
-          period_end: monthEnd.toISOString().split('T')[0]
-        });
-        
-        currentDate.setMonth(currentDate.getMonth() + 1);
+      // Tăng tháng lên để xử lý các tháng tiếp theo
+      currentMonth++;
+      if (currentMonth > 11) {
+        currentMonth = 0;
+        currentYear++;
       }
       
-      // Tháng cuối cùng: từ đầu tháng đến end_date
-      if (currentDate.getMonth() === endDate.getMonth() && 
-          currentDate.getFullYear() === endDate.getFullYear()) {
+      // Xử lý các tháng ở giữa (từ đầu đến cuối tháng)
+      while (
+        (currentYear < endYear) || 
+        (currentYear === endYear && currentMonth < endMonth)
+      ) {
+        const midPeriodStart = getFirstDayOfMonth(currentYear, currentMonth);
+        const midPeriodEnd = getLastDayOfMonth(currentYear, currentMonth);
+        
         months.push({
-          period_start: currentDate.toISOString().split('T')[0],
-          period_end: endDate.toISOString().split('T')[0]
+          period_start: midPeriodStart,
+          period_end: midPeriodEnd
+        });
+        
+        logger.info('Middle month calculation:', {
+          start_date: midPeriodStart,
+          end_date: midPeriodEnd,
+          month: currentMonth + 1,
+          year: currentYear
+        });
+        
+        // Move to the next month
+        currentMonth++;
+        if (currentMonth > 11) {
+          currentMonth = 0;
+          currentYear++;
+        }
+      }
+      
+      // Xử lý tháng cuối (từ đầu tháng đến endDate)
+      // Chỉ xử lý nếu tháng cuối cùng chưa được xử lý trong các tháng trước đó
+      if (currentYear === endYear && currentMonth === endMonth) {
+        const lastPeriodStart = getFirstDayOfMonth(endYear, endMonth);
+        const lastPeriodEnd = endDate.toISOString().split('T')[0];
+        
+        months.push({
+          period_start: lastPeriodStart,
+          period_end: lastPeriodEnd
+        });
+        
+        logger.info('Last month calculation:', {
+          start_date: lastPeriodStart,
+          end_date: lastPeriodEnd,
+          month: endMonth + 1,
+          year: endYear
         });
       }
     }
