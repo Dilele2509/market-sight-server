@@ -693,12 +693,12 @@ const getEarlyLifeCustomersMetrics = async (req, res) => {
 
 const getMatureCustomersMetrics = async (req, res) => {
   const user = req.user;
-  const { reference_date, time_range } = req.body;
+  const { start_date, end_date } = req.body;
 
   logger.info('Starting mature customers metrics analysis', {
     user_id: user?.user_id,
-    reference_date,
-    time_range
+    start_date,
+    end_date
   });
 
   if (!user || !user.user_id) {
@@ -709,38 +709,46 @@ const getMatureCustomersMetrics = async (req, res) => {
     });
   }
 
-  if (!reference_date || !time_range) {
-    logger.warn('Missing required parameters', { reference_date, time_range });
+  if (!start_date || !end_date) {
+    logger.warn('Missing required parameters', { start_date, end_date });
     return res.status(400).json({
       success: false,
-      error: "Reference date and time range are required"
+      error: "Start date and end date are required"
     });
   }
 
   try {
     // Validate date format
-    const referenceDate = new Date(reference_date);
-    if (isNaN(referenceDate.getTime())) {
+    const startDate = new Date(start_date);
+    const endDate = new Date(end_date);
+    
+    if (isNaN(startDate.getTime())) {
       return res.status(400).json({
         success: false,
-        error: "Invalid reference_date format. Use YYYY-MM-DD"
+        error: "Invalid start_date format. Use YYYY-MM-DD"
+      });
+    }
+    
+    if (isNaN(endDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid end_date format. Use YYYY-MM-DD"
       });
     }
 
-    // Validate time_range is a positive number
-    const timeRange = Number(time_range);
-    if (isNaN(timeRange) || timeRange <= 0) {
+    // Validate date range
+    if (startDate > endDate) {
       return res.status(400).json({
         success: false,
-        error: "Time range must be a positive number"
+        error: "Start date cannot be after end date"
       });
     }
 
-    // Validate reference_date is not in future
-    if (referenceDate > new Date()) {
+    // Validate end_date is not in future
+    if (endDate > new Date()) {
       return res.status(400).json({
         success: false,
-        error: "Reference date cannot be in the future"
+        error: "End date cannot be in the future"
       });
     }
 
@@ -765,16 +773,16 @@ const getMatureCustomersMetrics = async (req, res) => {
     // Get metrics using the RPC function with new parameters
     const { data: metricsData, error: metricsError } = await supabase.rpc('get_mature_customers_metrics', {
       p_business_id: Number(userData.business_id),
-      p_reference_date: referenceDate.toISOString().split('T')[0], // Convert to YYYY-MM-DD
-      p_time_range: Number(time_range)
+      p_start_date: startDate.toISOString().split('T')[0], // Convert to YYYY-MM-DD
+      p_end_date: endDate.toISOString().split('T')[0] // Convert to YYYY-MM-DD
     });
 
     if (metricsError) {
       logger.error('Error in get_mature_customers_metrics RPC:', {
         error: metricsError.message,
         business_id: userData.business_id,
-        reference_date,
-        time_range
+        start_date,
+        end_date
       });
       throw metricsError;
     }
@@ -782,8 +790,8 @@ const getMatureCustomersMetrics = async (req, res) => {
     // Get detailed customer information
     const { data: customersData, error: customersError } = await supabase.rpc('get_detailed_mature_customers_info', {
       p_business_id: Number(userData.business_id),
-      p_reference_date: referenceDate.toISOString().split('T')[0], // Convert to YYYY-MM-DD
-      p_time_range: Number(time_range)
+      p_start_date: startDate.toISOString().split('T')[0], // Convert to YYYY-MM-DD
+      p_end_date: endDate.toISOString().split('T')[0] // Convert to YYYY-MM-DD
     });
 
     if (customersError) {
@@ -797,8 +805,8 @@ const getMatureCustomersMetrics = async (req, res) => {
     if (!metricsData || metricsData.length === 0) {
       logger.warn('No data returned from metrics function', {
         business_id: userData.business_id,
-        reference_date,
-        time_range
+        start_date,
+        end_date
       });
       return res.json({
         success: true,
@@ -807,8 +815,8 @@ const getMatureCustomersMetrics = async (req, res) => {
           metrics: [],
           customers: [],
           time_window: {
-            reference_date,
-            time_range
+            start_date,
+            end_date
           }
         }
       });
@@ -845,9 +853,9 @@ const getMatureCustomersMetrics = async (req, res) => {
         const totalCustomerCount = metricsData.reduce((sum, period) => sum + Number(period.customer_count || 0), 0);
         
         // Calculate total days in the time range
-        const startDate = new Date(metricsData[0]?.period_start);
-        const endDate = new Date(metricsData[metricsData.length - 1]?.period_end);
-        const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+        const firstPeriodStart = new Date(metricsData[0]?.period_start);
+        const lastPeriodEnd = new Date(metricsData[metricsData.length - 1]?.period_end);
+        const totalDays = Math.ceil((lastPeriodEnd - firstPeriodStart) / (1000 * 60 * 60 * 24)) + 1;
 
         // Calculate weighted averages for metrics that need it
         const weightedPurchaseFrequency = metricsData.reduce((sum, period) => {
@@ -881,10 +889,10 @@ const getMatureCustomersMetrics = async (req, res) => {
       })(),
       customers: customersData || [],
       time_window: {
-        reference_date,
-        time_range,
-        start_date: metricsData[0]?.period_start,
-        end_date: metricsData[metricsData.length - 1]?.period_end
+        start_date,
+        end_date,
+        start_date_formatted: startDate.toISOString().split('T')[0],
+        end_date_formatted: endDate.toISOString().split('T')[0]
       }
     };
 
