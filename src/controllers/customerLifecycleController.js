@@ -36,6 +36,11 @@ const getNewCustomersMetrics = async (req, res) => {
     // Validate date format
     const startDate = new Date(start_date);
     const endDate = new Date(end_date);
+    
+    // Convert to UTC midnight for consistent date handling
+    startDate.setUTCHours(0, 0, 0, 0);
+    endDate.setUTCHours(23, 59, 59, 999); // End of day in UTC
+    
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
       return res.status(400).json({
         success: false,
@@ -52,7 +57,10 @@ const getNewCustomersMetrics = async (req, res) => {
     }
 
     // Validate end date is not in future
-    if (endDate > new Date()) {
+    const now = new Date();
+    now.setUTCHours(23, 59, 59, 999); // End of current day in UTC
+    
+    if (endDate > now) {
       return res.status(400).json({
         success: false,
         error: "End date cannot be in the future"
@@ -77,49 +85,25 @@ const getNewCustomersMetrics = async (req, res) => {
       });
     }
 
-    // Get metrics using the RPC function
-    const { data: metricsData, error: metricsError } = await supabase.rpc('get_new_customers_metrics', {
-      p_business_id: userData.business_id,
-      p_start_date: startDate.toISOString().split('T')[0],
-      p_end_date: endDate.toISOString().split('T')[0]
-    });
-
-    if (metricsError) {
-      logger.error('Error in get_new_customers_metrics RPC:', {
-        error: metricsError.message,
-        business_id: userData.business_id,
-        start_date,
-        end_date
-      });
-      throw metricsError;
-    }
-
-    // Get detailed customer information
-    const { data: customersData, error: customersError } = await supabase.rpc('get_detailed_new_customers_info', {
-      p_business_id: userData.business_id,
-      p_start_date: startDate.toISOString().split('T')[0],
-      p_end_date: endDate.toISOString().split('T')[0]
-    });
-
-    if (customersError) {
-      logger.error('Error in get_detailed_new_customers_info RPC:', {
-        error: customersError.message,
-        business_id: userData.business_id
-      });
-      throw customersError;
-    }
-
     // Generate all months in range
     const months = [];
     let isMonthlyBreakdown = false;
 
     // Tính khoảng cách tháng chính xác hơn
     function getMonthDiff(startDate, endDate) {
-      // Tính số tháng giữa hai ngày
-      const startYear = startDate.getFullYear();
-      const startMonth = startDate.getMonth();
-      const endYear = endDate.getFullYear();
-      const endMonth = endDate.getMonth();
+      // Ensure we're working with UTC date values for consistent timezone handling
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      
+      // Set to UTC hours (beginning of day)
+      start.setUTCHours(0, 0, 0, 0);
+      end.setUTCHours(0, 0, 0, 0);
+      
+      // Tính số tháng giữa hai ngày sử dụng UTC để nhất quán
+      const startYear = start.getUTCFullYear();
+      const startMonth = start.getUTCMonth();
+      const endYear = end.getUTCFullYear();
+      const endMonth = end.getUTCMonth();
       
       // Tính khoảng cách tháng cơ bản
       const monthDiff = (endYear - startYear) * 12 + (endMonth - startMonth);
@@ -131,14 +115,16 @@ const getNewCustomersMetrics = async (req, res) => {
       
       // Kiểm tra trường hợp chính xác 1 tháng
       if (monthDiff === 1) {
-        const startDay = startDate.getDate();
+        const startDay = start.getUTCDate();
         // Ngày 1 của tháng kế tiếp từ startDate
-        const nextMonth = new Date(startDate);
-        nextMonth.setMonth(nextMonth.getMonth() + 1);
-        nextMonth.setDate(startDay);
+        const nextMonth = new Date(Date.UTC(
+          start.getUTCFullYear(),
+          start.getUTCMonth() + 1,
+          startDay
+        ));
         
         // Nếu endDate <= nextMonth thì coi là chưa đủ 1 tháng đầy đủ
-        if (endDate <= nextMonth) {
+        if (end <= nextMonth) {
           return 0;
         }
       }
@@ -188,85 +174,177 @@ const getNewCustomersMetrics = async (req, res) => {
       }
     }
 
+    // Cải tiến: Lấy dữ liệu cho từng tháng riêng biệt thay vì sử dụng dữ liệu chung cho toàn khoảng thời gian
+    const metricsWithData = [];
 
-    // Create metrics data with default values for all months
-    const metricsWithDefaults = months.map(month => {
-      // Tìm dữ liệu chính xác trong kết quả từ RPC
-      const exactMatch = metricsData?.find(m => 
-        m.period_start === month.period_start && 
-        m.period_end === month.period_end
-      );
-      
-      // Nếu có dữ liệu chính xác thì sử dụng
-      if (exactMatch) {
-        logger.info('Found exact match for period:', {
-          period: {
-            start: month.period_start,
-            end: month.period_end
-          },
-          data: {
-            customer_count: exactMatch.customer_count,
-            gmv: exactMatch.gmv
-          }
-        });
-        
-        return {
-          period: {
-            start_date: month.period_start,
-            end_date: month.period_end
-          },
-          values: {
-            customer_count: Number(exactMatch.customer_count || 0),
-            gmv: Number(exactMatch.gmv || 0),
-            orders: Number(exactMatch.orders || 0),
-            unique_customers: Number(exactMatch.unique_customers || 0),
-            aov: Number(exactMatch.aov || 0),
-            avg_bill_per_user: Number(exactMatch.avg_bill_per_user || 0),
-            arpu: Number(exactMatch.arpu || 0),
-            orders_per_day: Number(exactMatch.orders_per_day || 0),
-            orders_per_day_per_store: Number(exactMatch.orders_per_day_per_store || 0),
-            first_purchase_gmv: Number(exactMatch.first_purchase_gmv || 0),
-            avg_first_purchase_value: Number(exactMatch.avg_first_purchase_value || 0),
-            conversion_to_second_purchase_rate: Number(exactMatch.conversion_to_second_purchase_rate || 0)
-          }
-        };
-      }
-      
-      // Nếu không tìm thấy dữ liệu chính xác, trả về giá trị mặc định
-      logger.info('No exact match found for period:', {
-        period: {
-          start: month.period_start,
-          end: month.period_end
-        }
+    // Kết quả tổng hợp cho toàn khoảng thời gian (dùng để tính metrics tổng)
+    let aggregatedMetricsData = null;
+
+    // Trường hợp không breakdown theo tháng: chỉ gọi RPC một lần cho toàn bộ khoảng thời gian
+    if (!isMonthlyBreakdown) {
+      const { data: periodData, error: periodError } = await supabase.rpc('get_new_customers_metrics', {
+        p_business_id: userData.business_id,
+        p_start_date: new Date(startDate.toISOString().split('T')[0]).toISOString().split('T')[0],
+        p_end_date: new Date(endDate.toISOString().split('T')[0]).toISOString().split('T')[0]
       });
-      
-      return {
-        period: {
-          start_date: month.period_start,
-          end_date: month.period_end
-        },
-        values: {
-          customer_count: 0,
-          gmv: 0,
-          orders: 0,
-          unique_customers: 0,
-          aov: 0,
-          avg_bill_per_user: 0,
-          arpu: 0,
-          orders_per_day: 0,
-          orders_per_day_per_store: 0,
-          first_purchase_gmv: 0,
-          avg_first_purchase_value: 0,
-          conversion_to_second_purchase_rate: 0
+
+      if (periodError) {
+        logger.error('Error fetching metrics for period:', {
+          error: periodError.message,
+          period: months[0]
+        });
+      } else {
+        aggregatedMetricsData = periodData && periodData.length > 0 ? periodData[0] : null;
+        
+        if (aggregatedMetricsData) {
+          metricsWithData.push({
+            period: {
+              start_date: months[0].period_start,
+              end_date: months[0].period_end
+            },
+            values: {
+              customer_count: Number(aggregatedMetricsData.customer_count || 0),
+              gmv: Number(aggregatedMetricsData.gmv || 0),
+              orders: Number(aggregatedMetricsData.orders || 0),
+              unique_customers: Number(aggregatedMetricsData.unique_customers || 0),
+              aov: Number(aggregatedMetricsData.aov || 0),
+              avg_bill_per_user: Number(aggregatedMetricsData.avg_bill_per_user || 0),
+              arpu: Number(aggregatedMetricsData.arpu || 0),
+              orders_per_day: Number(aggregatedMetricsData.orders_per_day || 0),
+              orders_per_day_per_store: Number(aggregatedMetricsData.orders_per_day_per_store || 0),
+              first_purchase_gmv: Number(aggregatedMetricsData.first_purchase_gmv || 0),
+              avg_first_purchase_value: Number(aggregatedMetricsData.avg_first_purchase_value || 0),
+              conversion_to_second_purchase_rate: Number(aggregatedMetricsData.conversion_to_second_purchase_rate || 0)
+            }
+          });
+        } else {
+          // Nếu không có dữ liệu, vẫn trả về một khoảng thời gian với các metrics bằng 0
+          metricsWithData.push({
+            period: {
+              start_date: months[0].period_start,
+              end_date: months[0].period_end
+            },
+            values: {
+              customer_count: 0,
+              gmv: 0,
+              orders: 0,
+              unique_customers: 0,
+              aov: 0,
+              avg_bill_per_user: 0,
+              arpu: 0,
+              orders_per_day: 0,
+              orders_per_day_per_store: 0,
+              first_purchase_gmv: 0,
+              avg_first_purchase_value: 0,
+              conversion_to_second_purchase_rate: 0
+            }
+          });
         }
-      };
-    });
+      }
+    } 
+    // Trường hợp breakdown theo tháng: gọi RPC riêng cho từng tháng 
+    else {
+      // Đầu tiên, lấy dữ liệu tổng hợp cho toàn khoảng thời gian (sử dụng cho tính toán tổng)
+      const { data: fullRangeData, error: fullRangeError } = await supabase.rpc('get_new_customers_metrics', {
+        p_business_id: userData.business_id,
+        p_start_date: new Date(startDate.toISOString().split('T')[0]).toISOString().split('T')[0],
+        p_end_date: new Date(endDate.toISOString().split('T')[0]).toISOString().split('T')[0]
+      });
+
+      if (!fullRangeError && fullRangeData && fullRangeData.length > 0) {
+        aggregatedMetricsData = fullRangeData[0];
+      }
+
+      // Sau đó, lấy dữ liệu chi tiết cho từng tháng 
+      for (const month of months) {
+        const { data: periodData, error: periodError } = await supabase.rpc('get_new_customers_metrics', {
+          p_business_id: userData.business_id,
+          p_start_date: month.period_start,
+          p_end_date: month.period_end
+        });
+
+        if (periodError) {
+          logger.error('Error fetching metrics for period:', {
+            error: periodError.message,
+            period: month
+          });
+          
+          // Nếu có lỗi, vẫn đảm bảo có một entry với giá trị 0
+          metricsWithData.push({
+            period: {
+              start_date: month.period_start,
+              end_date: month.period_end
+            },
+            values: {
+              customer_count: 0,
+              gmv: 0,
+              orders: 0,
+              unique_customers: 0,
+              aov: 0,
+              avg_bill_per_user: 0,
+              arpu: 0,
+              orders_per_day: 0,
+              orders_per_day_per_store: 0,
+              first_purchase_gmv: 0,
+              avg_first_purchase_value: 0,
+              conversion_to_second_purchase_rate: 0
+            }
+          });
+        } else if (periodData && periodData.length > 0) {
+          // Nếu có dữ liệu cho tháng này, sử dụng dữ liệu đó
+          const monthData = periodData[0];
+          
+          metricsWithData.push({
+            period: {
+              start_date: month.period_start,
+              end_date: month.period_end
+            },
+            values: {
+              customer_count: Number(monthData.customer_count || 0),
+              gmv: Number(monthData.gmv || 0),
+              orders: Number(monthData.orders || 0),
+              unique_customers: Number(monthData.unique_customers || 0),
+              aov: Number(monthData.aov || 0),
+              avg_bill_per_user: Number(monthData.avg_bill_per_user || 0),
+              arpu: Number(monthData.arpu || 0),
+              orders_per_day: Number(monthData.orders_per_day || 0),
+              orders_per_day_per_store: Number(monthData.orders_per_day_per_store || 0),
+              first_purchase_gmv: Number(monthData.first_purchase_gmv || 0),
+              avg_first_purchase_value: Number(monthData.avg_first_purchase_value || 0),
+              conversion_to_second_purchase_rate: Number(monthData.conversion_to_second_purchase_rate || 0)
+            }
+          });
+        } else {
+          // Nếu không có dữ liệu cho tháng này (tức là không có customer nào trong khoảng thời gian)
+          // Thêm một entry với tất cả giá trị bằng 0
+          metricsWithData.push({
+            period: {
+              start_date: month.period_start,
+              end_date: month.period_end
+            },
+            values: {
+              customer_count: 0,
+              gmv: 0,
+              orders: 0,
+              unique_customers: 0,
+              aov: 0,
+              avg_bill_per_user: 0,
+              arpu: 0,
+              orders_per_day: 0,
+              orders_per_day_per_store: 0,
+              first_purchase_gmv: 0,
+              avg_first_purchase_value: 0,
+              conversion_to_second_purchase_rate: 0
+            }
+          });
+        }
+      }
+    }
 
     logger.info('Final metrics data:', {
       is_monthly_breakdown: isMonthlyBreakdown,
-      metrics_count: metricsWithDefaults.length,
-      metrics_data: metricsData ? metricsData.length : 0,
-      periods: metricsWithDefaults.map(m => ({ 
+      metrics_count: metricsWithData.length,
+      periods: metricsWithData.map(m => ({ 
         start: m.period.start_date, 
         end: m.period.end_date,
         customer_count: m.values.customer_count
@@ -276,21 +354,21 @@ const getNewCustomersMetrics = async (req, res) => {
     // Format the response
     const response = {
       segment: "New Customers",
-      metrics: metricsWithDefaults,
+      metrics: metricsWithData,
       aggregated_metrics: (() => {
         // Calculate total values across all periods
-        const totalGMV = metricsWithDefaults.reduce((sum, period) => sum + Number(period.values.gmv || 0), 0);
-        const totalOrders = metricsWithDefaults.reduce((sum, period) => sum + Number(period.values.orders || 0), 0);
-        const totalUniqueCustomers = metricsWithDefaults.reduce((sum, period) => sum + Number(period.values.unique_customers || 0), 0);
-        const totalCustomerCount = metricsWithDefaults.reduce((sum, period) => sum + Number(period.values.customer_count || 0), 0);
-        const totalFirstPurchaseGMV = metricsWithDefaults.reduce((sum, period) => sum + Number(period.values.first_purchase_gmv || 0), 0);
+        const totalGMV = metricsWithData.reduce((sum, period) => sum + Number(period.values.gmv || 0), 0);
+        const totalOrders = metricsWithData.reduce((sum, period) => sum + Number(period.values.orders || 0), 0);
+        const totalUniqueCustomers = metricsWithData.reduce((sum, period) => sum + Number(period.values.unique_customers || 0), 0);
+        const totalCustomerCount = metricsWithData.reduce((sum, period) => sum + Number(period.values.customer_count || 0), 0);
+        const totalFirstPurchaseGMV = metricsWithData.reduce((sum, period) => sum + Number(period.values.first_purchase_gmv || 0), 0);
         
         // Calculate total days in the time range
         const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
 
         // Calculate weighted averages for metrics that need it
         const weightedConversionRate = totalCustomerCount > 0 ? 
-          metricsWithDefaults.reduce((sum, period) => {
+          metricsWithData.reduce((sum, period) => {
             const weight = Number(period.values.customer_count || 0);
             return sum + (Number(period.values.conversion_to_second_purchase_rate || 0) * weight);
           }, 0) / totalCustomerCount : 0;
@@ -309,43 +387,60 @@ const getNewCustomersMetrics = async (req, res) => {
           conversion_to_second_purchase_rate: weightedConversionRate
         };
       })(),
-      customers: customersData ? customersData.map(customer => ({
-        customer_id: customer.customer_id,
-        profile: {
-          first_name: customer.first_name,
-          last_name: customer.last_name,
-          email: customer.email,
-          phone: customer.phone,
-          gender: customer.gender,
-          birth_date: customer.birth_date,
-          registration_date: customer.registration_date,
-          address: customer.address,
-          city: customer.city
-        },
-        first_purchase: {
-          date: customer.first_purchase_date,
-          amount: Number(customer.first_purchase_amount || 0),
-          has_second_purchase: customer.has_second_purchase
-        },
-        transactions: {
-          total_purchases: Number(customer.total_purchases || 0),
-          total_spent: Number(customer.total_spent || 0),
-          avg_order_value: Number(customer.avg_order_value || 0)
-        },
-        products: {
-          categories_purchased: Number(customer.categories_purchased || 0),
-          purchase_categories: customer.purchase_categories,
-          brands_purchased: Number(customer.brands_purchased || 0),
-          brand_names: customer.brand_names
-        },
-        stores: {
-          stores_visited: Number(customer.stores_visited || 0),
-          store_names: customer.store_names
-        },
-        payment: {
-          payment_methods: customer.payment_methods
+      customers: await (async () => {
+        // Get detailed customer information
+        const { data: customersData, error: customersError } = await supabase.rpc('get_detailed_new_customers_info', {
+          p_business_id: userData.business_id,
+          p_start_date: new Date(startDate.toISOString().split('T')[0]).toISOString().split('T')[0],
+          p_end_date: new Date(endDate.toISOString().split('T')[0]).toISOString().split('T')[0]
+        });
+        
+        if (customersError) {
+          logger.error('Error in get_detailed_new_customers_info RPC:', {
+            error: customersError.message,
+            business_id: userData.business_id
+          });
+          return [];
         }
-      })) : [],
+        
+        return customersData ? customersData.map(customer => ({
+          customer_id: customer.customer_id,
+          profile: {
+            first_name: customer.first_name,
+            last_name: customer.last_name,
+            email: customer.email,
+            phone: customer.phone,
+            gender: customer.gender,
+            birth_date: customer.birth_date,
+            registration_date: customer.registration_date,
+            address: customer.address,
+            city: customer.city
+          },
+          first_purchase: {
+            date: customer.first_purchase_date,
+            amount: Number(customer.first_purchase_amount || 0),
+            has_second_purchase: customer.has_second_purchase
+          },
+          transactions: {
+            total_purchases: Number(customer.total_purchases || 0),
+            total_spent: Number(customer.total_spent || 0),
+            avg_order_value: Number(customer.avg_order_value || 0)
+          },
+          products: {
+            categories_purchased: Number(customer.categories_purchased || 0),
+            purchase_categories: customer.purchase_categories,
+            brands_purchased: Number(customer.brands_purchased || 0),
+            brand_names: customer.brand_names
+          },
+          stores: {
+            stores_visited: Number(customer.stores_visited || 0),
+            store_names: customer.store_names
+          },
+          payment: {
+            payment_methods: customer.payment_methods
+          }
+        })) : [];
+      })(),
       time_window: {
         start_date: startDate.toISOString().split('T')[0],
         end_date: endDate.toISOString().split('T')[0],
@@ -1265,7 +1360,11 @@ const getToplineMetricsBreakdown = async (req, res) => {
     // Validate date format
     const startDate = new Date(start_date);
     const endDate = new Date(end_date);
-
+    
+    // Convert to UTC midnight for consistent date handling
+    startDate.setUTCHours(0, 0, 0, 0);
+    endDate.setUTCHours(23, 59, 59, 999); // End of day in UTC
+    
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
       return res.status(400).json({
         success: false,
@@ -1282,7 +1381,10 @@ const getToplineMetricsBreakdown = async (req, res) => {
     }
 
     // Validate end date is not in future
-    if (endDate > new Date()) {
+    const now = new Date();
+    now.setUTCHours(23, 59, 59, 999); // End of current day in UTC
+    
+    if (endDate > now) {
       return res.status(400).json({
         success: false,
         error: "End date cannot be in the future"
