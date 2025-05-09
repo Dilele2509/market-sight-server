@@ -1,29 +1,17 @@
 import express from 'express';
 import { 
-    calculateRFMForBusiness,
-    getCustomerRFM,
-    getCustomersBySegment,
-    recalculateCustomerRFM,
-    getRFMSegmentStatistics
+    analyzeRFMForPeriod,
+    getRFMSegmentCustomers
 } from '../controllers/RFMController.js';
 import { authenticationToken } from '../controllers/authController.js';
 
 const router = express.Router();
 
-// Calculate RFM scores for all customers of a business
-router.post('/rfm/calculate', authenticationToken, calculateRFMForBusiness); //ko chay, ko test api -> test truc tiep tren supabase
+// Analyze RFM for a specific time period
+router.post('/rfm/analyze-period', authenticationToken, analyzeRFMForPeriod);
 
-// Get RFM analysis for a specific customer
-router.get('/rfm/rfm-customer/', authenticationToken, getCustomerRFM);
-
-// Get customers by segment
-router.get('/rfm/rfm-segment/:segment', authenticationToken, getCustomersBySegment);
-
-// Recalculate RFM for a specific customer
-router.post('/rfm/recalculate/:customer_id', authenticationToken, recalculateCustomerRFM);
-
-// get RFM statistics
-router.get('/rfm/rfm-statistic', authenticationToken, getRFMSegmentStatistics)
+// Get detailed customer information for a specific RFM segment
+router.get('/rfm/segment-customers/:segment?', authenticationToken, getRFMSegmentCustomers);
 
 export default router;
 
