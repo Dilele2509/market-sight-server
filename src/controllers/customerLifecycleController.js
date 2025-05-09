@@ -36,11 +36,11 @@ const getNewCustomersMetrics = async (req, res) => {
     // Validate date format
     const startDate = new Date(start_date);
     const endDate = new Date(end_date);
-    
+
     // Convert to UTC midnight for consistent date handling
     startDate.setUTCHours(0, 0, 0, 0);
     endDate.setUTCHours(23, 59, 59, 999); // End of day in UTC
-    
+
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
       return res.status(400).json({
         success: false,
@@ -59,7 +59,7 @@ const getNewCustomersMetrics = async (req, res) => {
     // Validate end date is not in future
     const now = new Date();
     now.setUTCHours(23, 59, 59, 999); // End of current day in UTC
-    
+
     if (endDate > now) {
       return res.status(400).json({
         success: false,
@@ -171,12 +171,12 @@ const getNewCustomersMetrics = async (req, res) => {
       const totalUniqueCustomers = metricsData.reduce((sum, period) => sum + Number(period.unique_customers || 0), 0);
       const totalCustomerCount = metricsData.reduce((sum, period) => sum + Number(period.customer_count || 0), 0);
       const totalFirstPurchaseGMV = metricsData.reduce((sum, period) => sum + Number(period.first_purchase_gmv || 0), 0);
-      
+
       // Calculate total days in the time range
       const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
 
       // Calculate weighted averages for metrics that need it
-      const weightedConversionRate = totalCustomerCount > 0 ? 
+      const weightedConversionRate = totalCustomerCount > 0 ?
         metricsData.reduce((sum, period) => {
           const weight = Number(period.customer_count || 0);
           return sum + (Number(period.conversion_to_second_purchase_rate || 0) * weight);
@@ -200,40 +200,28 @@ const getNewCustomersMetrics = async (req, res) => {
     // Format customer data
     const formattedCustomers = customersData ? customersData.map(customer => ({
       customer_id: customer.customer_id,
-      profile: {
-        first_name: customer.first_name,
-        last_name: customer.last_name,
-        email: customer.email,
-        phone: customer.phone,
-        gender: customer.gender,
-        birth_date: customer.birth_date,
-        registration_date: customer.registration_date,
-        address: customer.address,
-        city: customer.city
-      },
-      first_purchase: {
-        date: customer.first_purchase_date,
-        amount: Number(customer.first_purchase_amount || 0),
-        has_second_purchase: customer.has_second_purchase
-      },
-      transactions: {
-        total_purchases: Number(customer.total_purchases || 0),
-        total_spent: Number(customer.total_spent || 0),
-        avg_order_value: Number(customer.avg_order_value || 0)
-      },
-      products: {
-        categories_purchased: Number(customer.categories_purchased || 0),
-        purchase_categories: customer.purchase_categories,
-        brands_purchased: Number(customer.brands_purchased || 0),
-        brand_names: customer.brand_names
-      },
-      stores: {
-        stores_visited: Number(customer.stores_visited || 0),
-        store_names: customer.store_names
-      },
-      payment: {
-        payment_methods: customer.payment_methods
-      }
+      first_name: customer.first_name,
+      last_name: customer.last_name,
+      email: customer.email,
+      phone: customer.phone,
+      gender: customer.gender,
+      birth_date: customer.birth_date,
+      registration_date: customer.registration_date,
+      address: customer.address,
+      city: customer.city,
+      date: customer.first_purchase_date,
+      amount: Number(customer.first_purchase_amount || 0),
+      has_second_purchase: customer.has_second_purchase,
+      total_purchases: Number(customer.total_purchases || 0),
+      total_spent: Number(customer.total_spent || 0),
+      avg_order_value: Number(customer.avg_order_value || 0),
+      categories_purchased: Number(customer.categories_purchased || 0),
+      purchase_categories: customer.purchase_categories,
+      brands_purchased: Number(customer.brands_purchased || 0),
+      brand_names: customer.brand_names,
+      stores_visited: Number(customer.stores_visited || 0),
+      store_names: customer.store_names,
+      payment_methods: customer.payment_methods
     })) : [];
 
     const response = {
@@ -303,14 +291,14 @@ const getEarlyLifeCustomersMetrics = async (req, res) => {
     // Validate date format
     const startDate = new Date(start_date);
     const endDate = new Date(end_date);
-    
+
     if (isNaN(startDate.getTime())) {
       return res.status(400).json({
         success: false,
         error: "Invalid start_date format. Use YYYY-MM-DD"
       });
     }
-    
+
     if (isNaN(endDate.getTime())) {
       return res.status(400).json({
         success: false,
@@ -433,7 +421,7 @@ const getEarlyLifeCustomersMetrics = async (req, res) => {
         const totalOrders = metricsData.reduce((sum, period) => sum + Number(period.orders || 0), 0);
         const totalUniqueCustomers = metricsData.reduce((sum, period) => sum + Number(period.unique_customers || 0), 0);
         const totalCustomerCount = metricsData.reduce((sum, period) => sum + Number(period.customer_count || 0), 0);
-        
+
         // Calculate total days in the time range
         const firstPeriodStart = new Date(metricsData[0]?.period_start);
         const lastPeriodEnd = new Date(metricsData[metricsData.length - 1]?.period_end);
@@ -527,14 +515,14 @@ const getMatureCustomersMetrics = async (req, res) => {
     // Validate date format
     const startDate = new Date(start_date);
     const endDate = new Date(end_date);
-    
+
     if (isNaN(startDate.getTime())) {
       return res.status(400).json({
         success: false,
         error: "Invalid start_date format. Use YYYY-MM-DD"
       });
     }
-    
+
     if (isNaN(endDate.getTime())) {
       return res.status(400).json({
         success: false,
@@ -657,7 +645,7 @@ const getMatureCustomersMetrics = async (req, res) => {
         const totalOrders = metricsData.reduce((sum, period) => sum + Number(period.orders || 0), 0);
         const totalUniqueCustomers = metricsData.reduce((sum, period) => sum + Number(period.unique_customers || 0), 0);
         const totalCustomerCount = metricsData.reduce((sum, period) => sum + Number(period.customer_count || 0), 0);
-        
+
         // Calculate total days in the time range
         const firstPeriodStart = new Date(metricsData[0]?.period_start);
         const lastPeriodEnd = new Date(metricsData[metricsData.length - 1]?.period_end);
@@ -751,14 +739,14 @@ const getLoyalCustomersMetrics = async (req, res) => {
     // Validate date format
     const startDate = new Date(start_date);
     const endDate = new Date(end_date);
-    
+
     if (isNaN(startDate.getTime())) {
       return res.status(400).json({
         success: false,
         error: "Invalid start_date format. Use YYYY-MM-DD"
       });
     }
-    
+
     if (isNaN(endDate.getTime())) {
       return res.status(400).json({
         success: false,
@@ -881,7 +869,7 @@ const getLoyalCustomersMetrics = async (req, res) => {
         const totalOrders = metricsData.reduce((sum, period) => sum + Number(period.orders || 0), 0);
         const totalUniqueCustomers = metricsData.reduce((sum, period) => sum + Number(period.unique_customers || 0), 0);
         const totalCustomerCount = metricsData.reduce((sum, period) => sum + Number(period.customer_count || 0), 0);
-        
+
         // Calculate total days in the time range
         const firstPeriodStart = new Date(metricsData[0]?.period_start);
         const lastPeriodEnd = new Date(metricsData[metricsData.length - 1]?.period_end);
@@ -1063,11 +1051,11 @@ const getToplineMetricsBreakdown = async (req, res) => {
     // Validate date format
     const startDate = new Date(start_date);
     const endDate = new Date(end_date);
-    
+
     // Convert to UTC midnight for consistent date handling
     startDate.setUTCHours(0, 0, 0, 0);
     endDate.setUTCHours(23, 59, 59, 999); // End of day in UTC
-    
+
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
       return res.status(400).json({
         success: false,
@@ -1086,7 +1074,7 @@ const getToplineMetricsBreakdown = async (req, res) => {
     // Validate end date is not in future
     const now = new Date();
     now.setUTCHours(23, 59, 59, 999); // End of current day in UTC
-    
+
     if (endDate > now) {
       return res.status(400).json({
         success: false,
@@ -1255,14 +1243,14 @@ const getCustomerStageMonthlyBreakdown = async (req, res) => {
     // Validate date format
     const startDate = new Date(start_date);
     const endDate = new Date(end_date);
-    
+
     if (isNaN(startDate.getTime())) {
       return res.status(400).json({
         success: false,
         error: "Invalid start_date format. Use YYYY-MM-DD"
       });
     }
-    
+
     if (isNaN(endDate.getTime())) {
       return res.status(400).json({
         success: false,
@@ -1279,7 +1267,7 @@ const getCustomerStageMonthlyBreakdown = async (req, res) => {
     }
 
     const supabase = getSupabase();
-    
+
     // Get business_id
     const { data: userData, error: userError } = await supabase
       .from('users')
@@ -1304,7 +1292,7 @@ const getCustomerStageMonthlyBreakdown = async (req, res) => {
 
     // Get monthly breakdown using the RPC function
     const { data: breakdownData, error: breakdownError } = await supabase.rpc(
-      'get_customer_stage_monthly_breakdown', 
+      'get_customer_stage_monthly_breakdown',
       {
         p_business_id: Number(userData.business_id),
         p_start_date: formattedStartDate,
@@ -1330,12 +1318,12 @@ const getCustomerStageMonthlyBreakdown = async (req, res) => {
 
     // Initialize monthly data structure
     const monthlyData = {};
-    
+
     // Map returned data to standardized stage names
     const stageNameMapping = {
       "New Customers": "New",
       "Early Life Customers": "Early-life",
-      "Mature Customers": "Mature", 
+      "Mature Customers": "Mature",
       "Loyal Customers": "Loyal"
     };
 
@@ -1343,7 +1331,7 @@ const getCustomerStageMonthlyBreakdown = async (req, res) => {
       // Group data by month directly using the date values from RPC
       breakdownData.forEach(record => {
         const monthKey = record.month_start;
-        
+
         if (!monthlyData[monthKey]) {
           monthlyData[monthKey] = {
             period: {
@@ -1353,10 +1341,10 @@ const getCustomerStageMonthlyBreakdown = async (req, res) => {
             stages: {}
           };
         }
-        
+
         // Map the stage name
         const stageName = stageNameMapping[record.stage] || record.stage;
-        
+
         // Add this stage's data to the month
         monthlyData[monthKey].stages[stageName] = {
           customer_count: Number(record.customer_count) || 0,
@@ -1366,7 +1354,7 @@ const getCustomerStageMonthlyBreakdown = async (req, res) => {
     }
 
     // Convert to array and sort by month
-    const formattedData = Object.values(monthlyData).sort((a, b) => 
+    const formattedData = Object.values(monthlyData).sort((a, b) =>
       new Date(a.period.start_date) - new Date(b.period.start_date)
     );
 
