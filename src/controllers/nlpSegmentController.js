@@ -13,9 +13,23 @@ const generateSQLFromNLP = async (nlpQuery, user) => {
     const supabase = getSupabase();
     logger.info('Generating SQL from NLP query', { nlpQuery });
 
+    // Add security context to the prompt
     const prompt = `# System Prompt for Intelligent Customer Segmentation
 
 You are a professional AI assistant specialized in creating customer segmentation from natural language. Your task is to convert user requirements into accurate SQL queries based on the existing database structure.
+
+## SECURITY RULES - STRICTLY ENFORCED
+1. You MUST ONLY generate SELECT queries
+2. You MUST NEVER generate:
+   - DELETE queries
+   - UPDATE queries
+   - INSERT queries
+   - UPSERT queries
+   - DROP queries
+   - ALTER queries
+   - Any other modifying queries
+3. If the user requests data modification, respond with:
+   "I can only help you create customer segments by retrieving information. I cannot modify or delete any data. Please use the segmentation feature to analyze your customer data."
 
 ## CRITICAL: Response Format Requirements
 You MUST ALWAYS return a complete JSON response with BOTH the SQL query AND explanation. The response MUST follow this exact structure:
@@ -44,32 +58,25 @@ You MUST ALWAYS return a complete JSON response with BOTH the SQL query AND expl
 }
 
 ## Example Response
-For the query "Find female customers in Los Angeles who made purchases in the last 3 months", you MUST return:
+For the query "Find customers in Los Angeles", you MUST return:
 {
-  "sql_query": "SELECT DISTINCT c.* FROM customers c JOIN transactions t ON c.customer_id = t.customer_id AND t.business_id = [business_id] WHERE c.business_id = [business_id] AND c.gender = 'F' AND c.city = 'Los Angeles' AND t.transaction_date >= CURRENT_DATE - INTERVAL '3 months'",
+  "sql_query": "SELECT DISTINCT c.* FROM customers c WHERE c.business_id = [business_id] AND c.city = 'Los Angeles'",
   "explanation": {
-    "query_intent": "Find female customers in Los Angeles who have made purchases in the last 3 months",
+    "query_intent": "Find all customers located in Los Angeles",
     "logic_steps": [
-      "Join customers with transactions to get purchase history",
-      "Filter for female customers using gender = 'F'",
-      "Filter for customers in Los Angeles",
-      "Filter for transactions in the last 3 months"
+      "Select distinct customer records to avoid duplicates",
+      "Filter customers by city = 'Los Angeles'",
+      "Ensure results are scoped to the current business"
     ],
     "key_conditions": [
-      "Gender = 'F' to find female customers",
       "City = 'Los Angeles' to filter by location",
-      "Transaction date >= CURRENT_DATE - INTERVAL '3 months' to get recent purchases"
+      "Business ID filter to ensure data isolation"
     ],
     "tables_used": [
       {
         "table": "customers",
         "alias": "c",
-        "purpose": "Get customer information and filter by gender and city"
-      },
-      {
-        "table": "transactions",
-        "alias": "t",
-        "purpose": "Get purchase history and filter by transaction date"
+        "purpose": "Get customer information and filter by city"
       }
     ]
   }
@@ -262,13 +269,31 @@ Natural language query: ${nlpQuery}`;
     try {
       // Clean the response text before parsing JSON
       const cleanedResponse = message.content[0].text
-        .replace(/\n/g, ' ')  // Replace newlines with spaces
-        .replace(/\r/g, '')   // Remove carriage returns
-        .replace(/\t/g, ' ')  // Replace tabs with spaces
-        .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+        .replace(/\n/g, ' ')
+        .replace(/\r/g, '')
+        .replace(/\t/g, ' ')
+        .replace(/\s+/g, ' ')
         .trim();
 
-      response = JSON.parse(cleanedResponse);
+      // Check if the response is a rejection message
+      if (cleanedResponse.includes("I can only help you create customer segments") ||
+          cleanedResponse.includes("I cannot modify or delete any data")) {
+        logger.info('AI rejected dangerous operation', { response: cleanedResponse });
+        return {
+          isRejected: true,
+          message: cleanedResponse
+        };
+      }
+
+      try {
+        response = JSON.parse(cleanedResponse);
+      } catch (parseError) {
+        logger.error('Failed to parse AI response as JSON:', { 
+          response: cleanedResponse,
+          error: parseError.message 
+        });
+        throw new Error('Invalid response format from AI. Please try rephrasing your query.');
+      }
       
       // Validate response structure
       if (!response.sql_query || !response.explanation) {
@@ -279,7 +304,35 @@ Natural language query: ${nlpQuery}`;
         });
         throw new Error('Invalid response structure: missing required fields');
       }
+
+      // Security validation - ensure only SELECT queries
+      const upperSqlQuery = response.sql_query.trim().toUpperCase();
+      if (!upperSqlQuery.startsWith('SELECT')) {
+        logger.error('Security violation: Non-SELECT query detected', {
+          query: response.sql_query,
+          user: user.user_id
+        });
+        throw new Error('Only SELECT queries are allowed for customer segmentation');
+      }
+
+      // Additional security checks
+      const dangerousKeywords = [
+        'DELETE', 'UPDATE', 'INSERT', 'UPSERT', 'DROP', 'ALTER', 'TRUNCATE',
+        'CREATE', 'MODIFY', 'REMOVE', 'REPLACE'
+      ];
       
+      const containsDangerousKeyword = dangerousKeywords.some(keyword => 
+        upperSqlQuery.includes(keyword)
+      );
+
+      if (containsDangerousKeyword) {
+        logger.error('Security violation: Dangerous keyword detected', {
+          query: response.sql_query,
+          user: user.user_id
+        });
+        throw new Error('Query contains dangerous operations. Only SELECT queries are allowed.');
+      }
+
       // Validate explanation structure
       const requiredExplanationFields = ['query_intent', 'logic_steps', 'key_conditions', 'tables_used'];
       const missingFields = requiredExplanationFields.filter(field => !response.explanation[field]);
@@ -303,6 +356,46 @@ Natural language query: ${nlpQuery}`;
         .replace(/ORDER BY/g, '\nORDER BY')
         .replace(/HAVING/g, '\nHAVING')
         .trim();
+
+      // Clean the SQL query
+      let finalSqlQuery = response.sql_query.trim().replace(/;$/, '');
+
+      // Final security check before execution
+      if (!finalSqlQuery.toUpperCase().startsWith('SELECT DISTINCT C.*')) {
+        logger.error('Security violation: Query does not start with SELECT DISTINCT c.*', {
+          query: finalSqlQuery,
+          user: user.user_id
+        });
+        throw new Error('Query must start with SELECT DISTINCT c.* for customer segmentation');
+      }
+
+      // Replace [business_id] placeholder with actual business_id
+      finalSqlQuery = finalSqlQuery.replace(/\[business_id\]/g, user.business_id);
+
+      // Add business_id filter if not present
+      if (!finalSqlQuery.toLowerCase().includes('where')) {
+        finalSqlQuery += ' WHERE c.business_id = ' + user.business_id;
+      } else if (!finalSqlQuery.toLowerCase().includes('business_id')) {
+        finalSqlQuery = finalSqlQuery.replace(/where/i, 'WHERE c.business_id = ' + user.business_id + ' AND ');
+      }
+
+      logger.info('Executing generated SQL query', { sqlQuery: finalSqlQuery });
+
+      // Execute the query
+      const { data: result, error } = await supabase.rpc('execute_dynamic_query', {
+        query_text: finalSqlQuery
+      });
+
+      if (error) {
+        logger.error('SQL Query Error:', { error, sqlQuery: finalSqlQuery });
+        throw new Error('Failed to execute SQL query: ' + error.message);
+      }
+
+      return {
+        isRejected: false,
+        sqlQuery: finalSqlQuery,
+        explanation: response.explanation
+      };
     } catch (error) {
       logger.error('Error parsing AI response:', { 
         error, 
@@ -311,61 +404,6 @@ Natural language query: ${nlpQuery}`;
       });
       throw new Error('Failed to parse AI response: ' + error.message);
     }
-
-    // Clean the SQL query
-    let sqlQuery = response.sql_query.trim().replace(/;$/, '');
-
-    // Ensure the query starts with SELECT DISTINCT c.*
-    if (!sqlQuery.toLowerCase().startsWith('select distinct c.*')) {
-      sqlQuery = 'SELECT DISTINCT c.* ' + sqlQuery.substring(sqlQuery.toLowerCase().indexOf('from'));
-    }
-
-    // Replace [business_id] placeholders with actual business_id
-    sqlQuery = sqlQuery.replace(/\[business_id\]/g, user.business_id);
-
-    // Add business_id filter if not present
-    if (!sqlQuery.toLowerCase().includes('where')) {
-      sqlQuery += ' WHERE c.business_id = ' + user.business_id;
-    } else if (!sqlQuery.toLowerCase().includes('business_id')) {
-      sqlQuery = sqlQuery.replace(/where/i, 'WHERE c.business_id = ' + user.business_id + ' AND ');
-    }
-
-    // Fix interval syntax if present
-    sqlQuery = sqlQuery.replace(/INTERVAL\s+(\d+)\s+MONTH/i, "INTERVAL '$1 months'");
-
-    // Fix city conditions - ensure we're using c.city for customer location
-    if (sqlQuery.toLowerCase().includes('s.city') && !sqlQuery.toLowerCase().includes('c.city')) {
-      sqlQuery = sqlQuery.replace(/s\.city\s*=\s*['"]([^'"]+)['"]/i, "c.city = '$1'");
-    }
-
-    // Standardize values in the query
-    const mappingTypes = ['city', 'gender', 'payment_method', 'store_type'];
-    for (const type of mappingTypes) {
-      const regex = new RegExp(`\\b${type}\\s*=\\s*['"]([^'"]+)['"]`, 'gi');
-      let match;
-      while ((match = regex.exec(sqlQuery)) !== null) {
-        const inputValue = match[1];
-        const standardValue = await valueStandardizationService.getStandardValue(type, inputValue);
-        sqlQuery = sqlQuery.replace(match[0], `${type} = '${standardValue}'`);
-      }
-    }
-
-    logger.info('Executing generated SQL query', { sqlQuery });
-
-    // Execute the query
-    const { data: result, error } = await supabase.rpc('execute_dynamic_query', {
-      query_text: sqlQuery
-    });
-
-    if (error) {
-      logger.error('SQL Query Error:', { error, sqlQuery });
-      throw new Error('Failed to execute SQL query: ' + error.message);
-    }
-
-    return {
-      sqlQuery,
-      explanation: response.explanation
-    };
   } catch (error) {
     logger.error('Error generating SQL from NLP:', { error });
     throw new Error('Failed to generate SQL query from natural language');
@@ -389,20 +427,28 @@ const previewSegmentation = async (req, res) => {
     }
 
     // Generate SQL query from NLP
-    const { sqlQuery, explanation } = await generateSQLFromNLP(nlpQuery, user);
+    const result = await generateSQLFromNLP(nlpQuery, user);
+
+    // If the query was rejected, return the rejection message
+    if (result.isRejected) {
+      return res.json({
+        success: false,
+        error: result.message
+      });
+    }
 
     // Execute the query to get matching customers
-    const { data: result, error: queryError } = await supabase.rpc('execute_dynamic_query', {
-      query_text: sqlQuery
+    const { data: queryResult, error: queryError } = await supabase.rpc('execute_dynamic_query', {
+      query_text: result.sqlQuery
     });
 
     if (queryError) {
-      logger.error('Query execution error:', { error: queryError, sqlQuery });
+      logger.error('Query execution error:', { error: queryError, sqlQuery: result.sqlQuery });
       throw queryError;
     }
 
     // Extract customers from the JSON array result
-    const customers = result[0] || [];
+    const customers = queryResult[0] || [];
 
     // Transform the results to ensure we have the expected structure
     const transformedCustomers = customers.map(customer => ({
@@ -426,8 +472,8 @@ const previewSegmentation = async (req, res) => {
       success: true,
       data: {
         customers: transformedCustomers,
-        sqlQuery: sqlQuery,
-        explanation: explanation,
+        sqlQuery: result.sqlQuery,
+        explanation: result.explanation,
         count: transformedCustomers.length
       }
     });
