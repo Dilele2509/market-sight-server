@@ -427,23 +427,23 @@ const previewSegmentation = async (req, res) => {
     }
 
     // Generate SQL query from NLP
-    const result = await generateSQLFromNLP(nlpQuery, user);
+    const nlpResult = await generateSQLFromNLP(nlpQuery, user);
 
     // If the query was rejected, return the rejection message
-    if (result.isRejected) {
+    if (nlpResult.isRejected) {
       return res.json({
         success: false,
-        error: result.message
+        error: nlpResult.message
       });
     }
 
     // Execute the query to get matching customers
     const { data: queryResult, error: queryError } = await supabase.rpc('execute_dynamic_query', {
-      query_text: result.sqlQuery
+      query_text: nlpResult.sqlQuery
     });
 
     if (queryError) {
-      logger.error('Query execution error:', { error: queryError, sqlQuery: result.sqlQuery });
+      logger.error('Query execution error:', { error: queryError, sqlQuery: nlpResult.sqlQuery });
       throw queryError;
     }
 
@@ -472,8 +472,8 @@ const previewSegmentation = async (req, res) => {
       success: true,
       data: {
         customers: transformedCustomers,
-        sqlQuery: result.sqlQuery,
-        explanation: result.explanation,
+        sqlQuery: nlpResult.sqlQuery,
+        explanation: nlpResult.explanation,
         count: transformedCustomers.length
       }
     });
@@ -507,10 +507,22 @@ const createSegmentationFromNLP = async (req, res) => {
     }
 
     // Generate SQL query from NLP
-    const { sqlQuery, explanation } = await generateSQLFromNLP(nlpQuery, user);
+    const nlpResult = await generateSQLFromNLP(nlpQuery, user);
+
+    // If the query was rejected, return the rejection message
+    if (nlpResult.isRejected) {
+      return res.json({
+        success: false,
+        error: nlpResult.message
+      });
+    }
 
     // Create new segment
-    const segmentId = uuidv4();
+    const segmentNameSlug = segmentName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-') // Replace any non-alphanumeric characters with hyphens
+      .replace(/^-+|-+$/g, ''); // Remove leading and trailing hyphens
+    const segmentId = `segment:${segmentNameSlug}`;
     const now = new Date().toISOString();
 
     // Insert into segmentation table
@@ -527,7 +539,7 @@ const createSegmentationFromNLP = async (req, res) => {
         status: 'active',
         filter_criteria: {
           nlp_query: nlpQuery,
-          sql_query: sqlQuery
+          sql_query: nlpResult.sqlQuery
         },
         dataset: 'customers'
       });
@@ -538,17 +550,17 @@ const createSegmentationFromNLP = async (req, res) => {
     }
 
     // Execute the query to get matching customers
-    const { data: result, error: queryError } = await supabase.rpc('execute_dynamic_query', {
-      query_text: sqlQuery
+    const { data: queryResult, error: queryError } = await supabase.rpc('execute_dynamic_query', {
+      query_text: nlpResult.sqlQuery
     });
 
     if (queryError) {
-      logger.error('Query execution error:', { error: queryError, sqlQuery });
+      logger.error('Query execution error:', { error: queryError, sqlQuery: nlpResult.sqlQuery });
       throw queryError;
     }
 
     // Extract customers from the JSON array result
-    const customers = result[0] || [];
+    const customers = queryResult[0] || [];
 
     // Insert matching customers into segment_customers table
     const segmentCustomers = customers.map(customer => ({
