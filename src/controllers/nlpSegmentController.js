@@ -2,6 +2,7 @@ import { getSupabase, logger } from '../data/database.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { v4 as uuidv4 } from 'uuid';
 import { valueStandardizationService } from '../services/valueStandardizationService.js';
+import { generateFilterCriteria } from '../services/filterCriteriaService.js';
 
 const anthropic = new Anthropic({
   apiKey: process.env.CLAUDE_API_KEY,
@@ -305,6 +306,9 @@ Natural language query: ${nlpQuery}`;
         throw new Error('Invalid response structure: missing required fields');
       }
 
+      // Generate filter criteria from NLP query
+      const filterCriteria = await generateFilterCriteria(nlpQuery);
+
       // Security validation - ensure only SELECT queries
       const upperSqlQuery = response.sql_query.trim().toUpperCase();
       if (!upperSqlQuery.startsWith('SELECT')) {
@@ -394,7 +398,8 @@ Natural language query: ${nlpQuery}`;
       return {
         isRejected: false,
         sqlQuery: finalSqlQuery,
-        explanation: response.explanation
+        explanation: response.explanation,
+        filter_criteria: filterCriteria
       };
     } catch (error) {
       logger.error('Error parsing AI response:', { 
@@ -427,23 +432,23 @@ const previewSegmentation = async (req, res) => {
     }
 
     // Generate SQL query from NLP
-    const nlpResult = await generateSQLFromNLP(nlpQuery, user);
+    const result = await generateSQLFromNLP(nlpQuery, user);
 
     // If the query was rejected, return the rejection message
-    if (nlpResult.isRejected) {
+    if (result.isRejected) {
       return res.json({
         success: false,
-        error: nlpResult.message
+        error: result.message
       });
     }
 
     // Execute the query to get matching customers
     const { data: queryResult, error: queryError } = await supabase.rpc('execute_dynamic_query', {
-      query_text: nlpResult.sqlQuery
+      query_text: result.sqlQuery
     });
 
     if (queryError) {
-      logger.error('Query execution error:', { error: queryError, sqlQuery: nlpResult.sqlQuery });
+      logger.error('Query execution error:', { error: queryError, sqlQuery: result.sqlQuery });
       throw queryError;
     }
 
@@ -472,8 +477,9 @@ const previewSegmentation = async (req, res) => {
       success: true,
       data: {
         customers: transformedCustomers,
-        sqlQuery: nlpResult.sqlQuery,
-        explanation: nlpResult.explanation,
+        sqlQuery: result.sqlQuery,
+        explanation: result.explanation,
+        filter_criteria: result.filter_criteria,
         count: transformedCustomers.length
       }
     });
