@@ -287,7 +287,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Function to get detailed customer information for each RFM segment
+
+-- Function to get detailed customer information for each RFM segment--------------
+
+
 CREATE OR REPLACE FUNCTION get_rfm_segment_customers(
   target_business_id INTEGER,
   target_segment VARCHAR DEFAULT NULL,

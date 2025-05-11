@@ -11,7 +11,9 @@ const router = express.Router();
 router.post('/rfm/analyze-period', authenticationToken, analyzeRFMForPeriod);
 
 // Get detailed customer information for a specific RFM segment
-router.get('/rfm/segment-customers/:segment?', authenticationToken, getRFMSegmentCustomers);
+router.get('/rfm/segment-customers', authenticationToken, getRFMSegmentCustomers);
+
+// router.get('/rfm/segment-customers/:segment?', authenticationToken, getRFMSegmentCustomers);
 
 export default router;
 
