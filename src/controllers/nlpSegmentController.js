@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { v4 as uuidv4 } from 'uuid';
 import { valueStandardizationService } from '../services/valueStandardizationService.js';
 import { generateFilterCriteria } from '../services/filterCriteriaService.js';
+import { OPERATORS, EVENT_CONDITION_TYPES, FREQUENCY_OPTIONS, TIME_PERIOD_OPTIONS } from '../constants/operators.js';
 
 const anthropic = new Anthropic({
   apiKey: process.env.CLAUDE_API_KEY,
@@ -13,6 +14,15 @@ const generateSQLFromNLP = async (nlpQuery, user) => {
   try {
     const supabase = getSupabase();
     logger.info('Generating SQL from NLP query', { nlpQuery });
+
+    // Prepare operator references for the prompt
+    const textOperators = OPERATORS.text.map(op => `${op.value}: "${op.label}"`).join(', ');
+    const numberOperators = OPERATORS.number.map(op => `${op.value}: "${op.label}"`).join(', ');
+    const datetimeOperators = OPERATORS.datetime.map(op => `${op.value}: "${op.label}"`).join(', ');
+    const booleanOperators = OPERATORS.boolean.map(op => `${op.value}: "${op.label}"`).join(', ');
+    const eventConditionTypes = EVENT_CONDITION_TYPES.map(op => `${op.value}: "${op.label}"`).join(', ');
+    const frequencyOptions = FREQUENCY_OPTIONS.map(op => `${op.value}: "${op.label}"`).join(', ');
+    const timePeriodOptions = TIME_PERIOD_OPTIONS.map(op => `${op.value}: "${op.label}"`).join(', ');
 
     // Add security context to the prompt
     const prompt = `# System Prompt for Intelligent Customer Segmentation
@@ -33,7 +43,7 @@ You are a professional AI assistant specialized in creating customer segmentatio
    "I can only help you create customer segments by retrieving information. I cannot modify or delete any data. Please use the segmentation feature to analyze your customer data."
 
 ## CRITICAL: Response Format Requirements
-You MUST ALWAYS return a complete JSON response with BOTH the SQL query AND explanation. The response MUST follow this exact structure:
+You MUST ALWAYS return a complete JSON response with the SQL query, explanation, AND filter operators. The response MUST follow this exact structure:
 {
   "sql_query": "The actual SQL query without any explanations",
   "explanation": {
@@ -55,45 +65,188 @@ You MUST ALWAYS return a complete JSON response with BOTH the SQL query AND expl
         "purpose": "Why this table is needed"
       }
     ]
+  },
+  "filter_criteria": {
+    "type": "group",
+    "logic_operator": "AND",
+    "conditions": [
+      {
+        "dataset": "customers",
+        "field": "gender",
+        "operator": "equals",
+        "value": "F"
+      },
+      {
+        "dataset": "customers",
+        "field": "city",
+        "operator": "equals",
+        "value": "Los Angeles"
+      },
+      {
+        "type": "event",
+        "event_name": "purchase",
+        "event_condition_type": "performed",
+        "frequency": {
+          "operator": "at_least",
+          "value": 1
+        },
+        "time_period": {
+          "unit": "months",
+          "value": 3
+        }
+      }
+      // Add all conditions detected in the query
+    ]
   }
 }
 
 ## Example Response
-For the query "Find customers in Los Angeles", you MUST return:
+For the query "Find female customers in Los Angeles who made purchases in the last 3 months", you MUST return:
 {
-  "sql_query": "SELECT DISTINCT c.* FROM customers c WHERE c.business_id = [business_id] AND c.city = 'Los Angeles'",
+  "sql_query": "SELECT DISTINCT c.* FROM customers c JOIN transactions t ON c.customer_id = t.customer_id AND t.business_id = [business_id] WHERE c.business_id = [business_id] AND c.gender = 'F' AND c.city = 'Los Angeles' AND t.transaction_date >= CURRENT_DATE - INTERVAL '3 months'",
   "explanation": {
-    "query_intent": "Find all customers located in Los Angeles",
+    "query_intent": "Find female customers in Los Angeles who made purchases in the last 3 months",
     "logic_steps": [
       "Select distinct customer records to avoid duplicates",
-      "Filter customers by city = 'Los Angeles'",
+      "Join with transactions to check purchase history",
+      "Filter customers by gender = F (female)",
+      "Filter customers by city = Los Angeles",
+      "Filter transactions from the last 3 months",
       "Ensure results are scoped to the current business"
     ],
     "key_conditions": [
-      "City = 'Los Angeles' to filter by location",
+      "Gender = F to find female customers",
+      "City = Los Angeles to filter by location",
+      "Transaction date >= CURRENT_DATE - INTERVAL '3 months' to find recent purchases",
       "Business ID filter to ensure data isolation"
     ],
     "tables_used": [
       {
         "table": "customers",
         "alias": "c",
-        "purpose": "Get customer information and filter by city"
+        "purpose": "Get customer information and filter by gender and city"
+      },
+      {
+        "table": "transactions",
+        "alias": "t",
+        "purpose": "Check purchase history within timeframe"
+      }
+    ]
+  },
+  "filter_criteria": {
+    "type": "group",
+    "logic_operator": "AND",
+    "conditions": [
+      {
+        "dataset": "customers",
+        "field": "gender",
+        "operator": "equals",
+        "value": "F"
+      },
+      {
+        "dataset": "customers",
+        "field": "city",
+        "operator": "equals",
+        "value": "Los Angeles"
+      },
+      {
+        "type": "event",
+        "event_name": "purchase",
+        "event_condition_type": "performed",
+        "frequency": {
+          "operator": "at_least",
+          "value": 1
+        },
+        "time_period": {
+          "unit": "months",
+          "value": 3
+        }
       }
     ]
   }
 }
 
+## Filter Criteria Format Specification
+When generating the filter_criteria object, use the following formats and operators:
+
+### Text Field Operators (Use exactly these operator values):
+${textOperators}
+
+### Number Field Operators (Use exactly these operator values):
+${numberOperators}
+
+### Date/Time Field Operators (Use exactly these operator values):
+${datetimeOperators}
+
+### Boolean Field Operators (Use exactly these operator values):
+${booleanOperators}
+
+### Event Condition Types (Use exactly these values):
+${eventConditionTypes}
+
+### Frequency Options (Use exactly these values):
+${frequencyOptions}
+
+### Time Period Options (Use exactly these values):
+${timePeriodOptions}
+
+### For simple attribute conditions:
+{
+  "dataset": "[table name: customers, transactions, product_lines, stores]",
+  "field": "[field name]",
+  "operator": "[use exact operator value from lists above]",
+  "value": "[value]",
+  "value2": "[second value, only for 'between' operator]"
+}
+
+### For purchase events:
+{
+  "type": "event",
+  "event_name": "purchase",
+  "event_condition_type": "[use exact value from event condition types list]",
+  "frequency": {
+    "operator": "[use exact value from frequency options list]",
+    "value": "[number]"
+  },
+  "time_period": {
+    "unit": "[use exact value from time period options list]",
+    "value": "[number]"
+  }
+}
+
+### For purchase amount conditions:
+{
+  "type": "event",
+  "event_name": "purchase",
+  "event_condition_type": "amount",
+  "operator": "[use exact operator value from number operators list]",
+  "value": "[amount]",
+  "value2": "[second amount, only for 'between' operator]"
+}
+
+### For age calculations:
+{
+  "dataset": "customers",
+  "field": "birth_date",
+  "operator": "age_between",
+  "value": "[min age]",
+  "value2": "[max age]"
+}
+
 ## Response Validation
 Your response will be validated for:
-1. Complete JSON structure with both sql_query and explanation
+1. Complete JSON structure with sql_query, explanation, and filter_criteria
 2. All required explanation fields (query_intent, logic_steps, key_conditions, tables_used)
 3. Proper SQL query format
 4. Correct table aliases and business_id placeholders
+5. Complete filter_criteria structure representing all conditions in the query
+6. Use of exact operator values as specified in the lists above
 
 ## Main Tasks:
 1. Analyze natural language requirements for customer segmentation
 2. Convert to accurate PostgreSQL queries
-3. Provide clear explanation of the query logic
+3. Extract structured filter criteria that can be used programmatically
+4. Provide clear explanation of the query logic
 
 ## Processing Steps:
 
@@ -111,7 +264,7 @@ Your response will be validated for:
 
 | Natural Language Term | Database Field | Standard Value |
 |----------------------|----------------|----------------|
-| female, women | c.gender | 'F' |
+| female, women        | c.gender | 'F' |
 | male, men | c.gender | 'M' |
 | customer's city X | c.city | 'City Name' (proper capitalization) |
 | store in city X | s.city | 'City Name' (proper capitalization) |
@@ -297,17 +450,19 @@ Natural language query: ${nlpQuery}`;
       }
       
       // Validate response structure
-      if (!response.sql_query || !response.explanation) {
+      if (!response.sql_query || !response.explanation || !response.filter_criteria) {
         logger.error('Invalid response structure:', { 
           hasSqlQuery: !!response.sql_query,
           hasExplanation: !!response.explanation,
+          hasFilterCriteria: !!response.filter_criteria,
           response: cleanedResponse
         });
         throw new Error('Invalid response structure: missing required fields');
       }
 
-      // Generate filter criteria from NLP query
-      const filterCriteria = await generateFilterCriteria(nlpQuery);
+      // Use filter criteria service to standardize values and handle operators
+      // The service will use the filter_criteria from Claude as a base and enhance it
+      const enhancedFilterCriteria = await valueStandardizationService.standardizeFilterCriteria(response.filter_criteria);
 
       // Security validation - ensure only SELECT queries
       const upperSqlQuery = response.sql_query.trim().toUpperCase();
@@ -399,7 +554,7 @@ Natural language query: ${nlpQuery}`;
         isRejected: false,
         sqlQuery: finalSqlQuery,
         explanation: response.explanation,
-        filter_criteria: filterCriteria
+        filter_criteria: enhancedFilterCriteria
       };
     } catch (error) {
       logger.error('Error parsing AI response:', { 
