@@ -678,7 +678,7 @@ const previewSegmentation = async (req, res) => {
     // Generate SQL query from NLP
     const result = await generateSQLFromNLP(nlpQuery, user);
 
-    // If the query was rejected, return the rejection message in a user-friendly format
+    // If the query was rejected, return the rejection message
     if (result.isRejected) {
       return res.json({
         success: false,
@@ -686,6 +686,9 @@ const previewSegmentation = async (req, res) => {
         isAIResponse: true // Flag to indicate this is a direct AI response
       });
     }
+
+    // Transform filter criteria to storage format
+    const storageFilterCriteria = transformFilterCriteriaForStorage(result.filter_criteria);
 
     // Execute the query to get matching customers
     const { data: queryResult, error: queryError } = await supabase.rpc('execute_dynamic_query', {
@@ -709,7 +712,7 @@ const previewSegmentation = async (req, res) => {
         customers = queryResult;
       }
     }
-
+    
     // Ensure customers is an array before mapping
     if (!Array.isArray(customers)) {
       logger.warn('Expected customers array but got:', { 
@@ -744,6 +747,7 @@ const previewSegmentation = async (req, res) => {
         sqlQuery: result.sqlQuery,
         explanation: result.explanation,
         filter_criteria: result.filter_criteria,
+        storage_filter_criteria: storageFilterCriteria, // Include the transformed filter criteria
         count: transformedCustomers.length
       }
     });
@@ -753,6 +757,264 @@ const previewSegmentation = async (req, res) => {
       success: false,
       error: error.message
     });
+  }
+};
+
+// Function to transform Claude's filter criteria into storage format
+const transformFilterCriteriaForStorage = (filterCriteria) => {
+  try {
+    // Initialize the storage structure
+    const storageFormat = {
+      size: 0,
+      conditions: [],
+      conditionGroups: [],
+      rootOperator: filterCriteria.logic_operator || "AND"
+    };
+
+    // Helper function to validate and normalize operators based on field type
+    const normalizeOperator = (operator, fieldType) => {
+      // Default to text if field type not provided
+      const type = fieldType || 'text';
+      
+      // If not a valid operator type, default to text
+      const operatorList = OPERATORS[type] || OPERATORS.text;
+      
+      // Find exact match by value
+      const exactMatch = operatorList.find(op => op.value === operator);
+      if (exactMatch) return operator;
+      
+      // Find match by label (case insensitive)
+      const labelMatch = operatorList.find(op => 
+        op.label.toLowerCase() === (operator || '').toLowerCase()
+      );
+      if (labelMatch) return labelMatch.value;
+      
+      // Default to first operator in the list for the type
+      return operatorList[0].value;
+    };
+    
+    // Helper function to validate and normalize event condition types
+    const normalizeEventConditionType = (conditionType) => {
+      // Find exact match by value
+      const exactMatch = EVENT_CONDITION_TYPES.find(type => type.value === conditionType);
+      if (exactMatch) return conditionType;
+      
+      // Find match by label (case insensitive)
+      const labelMatch = EVENT_CONDITION_TYPES.find(type => 
+        type.label.toLowerCase() === (conditionType || '').toLowerCase()
+      );
+      if (labelMatch) return labelMatch.value;
+      
+      // Default to 'performed'
+      return 'performed';
+    };
+    
+    // Helper function to validate and normalize frequency options
+    const normalizeFrequency = (frequency) => {
+      // Find exact match by value
+      const exactMatch = FREQUENCY_OPTIONS.find(opt => opt.value === frequency);
+      if (exactMatch) return frequency;
+      
+      // Find match by label (case insensitive)
+      const labelMatch = FREQUENCY_OPTIONS.find(opt => 
+        opt.label.toLowerCase() === (frequency || '').toLowerCase()
+      );
+      if (labelMatch) return labelMatch.value;
+      
+      // Default to 'at_least'
+      return 'at_least';
+    };
+    
+    // Helper function to validate and normalize time period options
+    const normalizeTimePeriod = (timePeriod) => {
+      // Find exact match by value
+      const exactMatch = TIME_PERIOD_OPTIONS.find(opt => opt.value === timePeriod);
+      if (exactMatch) return timePeriod;
+      
+      // Find match by label (case insensitive)
+      const labelMatch = TIME_PERIOD_OPTIONS.find(opt => 
+        opt.label.toLowerCase() === (timePeriod || '').toLowerCase()
+      );
+      if (labelMatch) return labelMatch.value;
+      
+      // Default to 'days'
+      return 'days';
+    };
+
+    // Process conditions
+    if (filterCriteria.conditions && Array.isArray(filterCriteria.conditions)) {
+      let conditionId = 1;
+      let attributeConditionId = 1;
+
+      // Map each condition to the storage format
+      filterCriteria.conditions.forEach(condition => {
+        // Determine field type for appropriate operator validation
+        let fieldType = 'text'; // Default type
+        if (condition.dataset) {
+          if (condition.field) {
+            // Handle common field types
+            if (condition.field.includes('date') || condition.field.includes('time')) {
+              fieldType = 'datetime';
+            } else if (condition.field.includes('amount') || condition.field.includes('quantity') || 
+                     condition.field.includes('price') || condition.field.includes('cost')) {
+              fieldType = 'number';
+            } else if (condition.field.includes('is_') || condition.field.includes('has_')) {
+              fieldType = 'boolean';
+            }
+          }
+        }
+
+        if (condition.type === 'event') {
+          // Handle event conditions (purchase, etc.)
+          const eventCondition = {
+            id: conditionId++,
+            columnKey: condition.dataset || "customer_id",
+            relatedColKey: condition.relatedColKey || "customer_id",
+            type: "event",
+            eventType: normalizeEventConditionType(condition.event_condition_type),
+            operator: filterCriteria.logic_operator || "AND",
+            chosen: false,
+            selected: false,
+            attributeConditions: [],
+            relatedConditions: [],
+            relatedAttributeConditions: []
+          };
+
+          // Add frequency and time period if available
+          if (condition.frequency) {
+            eventCondition.frequency = normalizeFrequency(condition.frequency.operator);
+            eventCondition.count = condition.frequency.value || 1;
+          }
+
+          if (condition.time_period) {
+            eventCondition.timePeriod = normalizeTimePeriod(condition.time_period.unit);
+            eventCondition.timeValue = condition.time_period.value || 30;
+          }
+
+          // Add attribute conditions if any
+          if (condition.operator && (condition.value !== undefined || condition.event_condition_type === 'amount')) {
+            const attrCondition = {
+              id: attributeConditionId++,
+              field: condition.field || "total_amount",
+              operator: normalizeOperator(condition.operator, 'number'),
+              value: String(condition.value || ""),
+              value2: condition.value2 ? String(condition.value2) : "",
+              chosen: false,
+              selected: false
+            };
+            
+            eventCondition.attributeConditions.push(attrCondition);
+            eventCondition.relatedAttributeConditions.push(attrCondition);
+          } else if (condition.attributeConditions && Array.isArray(condition.attributeConditions)) {
+            // Handle explicitly provided attribute conditions
+            condition.attributeConditions.forEach(attr => {
+              // Determine attribute field type
+              let attrFieldType = 'text';
+              if (attr.field) {
+                if (attr.field.includes('date') || attr.field.includes('time')) {
+                  attrFieldType = 'datetime';
+                } else if (attr.field.includes('amount') || attr.field.includes('quantity') || 
+                         attr.field.includes('price') || attr.field.includes('cost')) {
+                  attrFieldType = 'number';
+                } else if (attr.field.includes('is_') || attr.field.includes('has_')) {
+                  attrFieldType = 'boolean';
+                }
+              }
+              
+              const attrCondition = {
+                id: attributeConditionId++,
+                field: attr.field,
+                operator: normalizeOperator(attr.operator, attrFieldType),
+                value: String(attr.value || ""),
+                value2: attr.value2 ? String(attr.value2) : "",
+                chosen: false,
+                selected: false
+              };
+              
+              eventCondition.attributeConditions.push(attrCondition);
+              eventCondition.relatedAttributeConditions.push(attrCondition);
+            });
+          }
+
+          storageFormat.conditions.push(eventCondition);
+        } else if (condition.dataset && condition.field) {
+          // Handle regular attribute conditions
+          const attributeCondition = {
+            id: conditionId++,
+            columnKey: condition.field,
+            datasetKey: condition.dataset,
+            type: "attribute",
+            operator: normalizeOperator(condition.operator, fieldType),
+            value: String(condition.value || ""),
+            value2: condition.value2 ? String(condition.value2) : "",
+            logicOperator: filterCriteria.logic_operator || "AND",
+            chosen: false,
+            selected: false
+          };
+          
+          storageFormat.conditions.push(attributeCondition);
+        }
+      });
+
+      // Handle condition groups if present
+      if (filterCriteria.condition_groups && Array.isArray(filterCriteria.condition_groups)) {
+        filterCriteria.condition_groups.forEach((group, index) => {
+          const conditionGroup = {
+            id: index + 1,
+            operator: group.operator || "AND",
+            conditions: []
+          };
+          
+          if (group.conditions && Array.isArray(group.conditions)) {
+            group.conditions.forEach(condition => {
+              // Determine field type for operator validation
+              let fieldType = 'text';
+              if (condition.field) {
+                if (condition.field.includes('date') || condition.field.includes('time')) {
+                  fieldType = 'datetime';
+                } else if (condition.field.includes('amount') || condition.field.includes('quantity') || 
+                         condition.field.includes('price') || condition.field.includes('cost')) {
+                  fieldType = 'number';
+                } else if (condition.field.includes('is_') || condition.field.includes('has_')) {
+                  fieldType = 'boolean';
+                }
+              }
+              
+              // Process each condition in the group
+              conditionGroup.conditions.push({
+                id: conditionId++,
+                columnKey: condition.field,
+                datasetKey: condition.dataset,
+                type: condition.type || "attribute",
+                operator: normalizeOperator(condition.operator, fieldType),
+                value: String(condition.value || ""),
+                value2: condition.value2 ? String(condition.value2) : "",
+                logicOperator: group.operator || "AND",
+                chosen: false,
+                selected: false
+              });
+            });
+          }
+          
+          storageFormat.conditionGroups.push(conditionGroup);
+        });
+      }
+    }
+
+    // Set size to total number of conditions across all groups
+    storageFormat.size = storageFormat.conditions.length + 
+      storageFormat.conditionGroups.reduce((sum, group) => sum + (group.conditions ? group.conditions.length : 0), 0);
+
+    return storageFormat;
+  } catch (error) {
+    logger.error('Error transforming filter criteria:', { error });
+    // Return a minimal valid structure if there's an error
+    return {
+      size: 0,
+      conditions: [],
+      conditionGroups: [],
+      rootOperator: "AND"
+    };
   }
 };
 
@@ -779,7 +1041,7 @@ const createSegmentationFromNLP = async (req, res) => {
     // Generate SQL query from NLP
     const nlpResult = await generateSQLFromNLP(nlpQuery, user);
 
-    // If the query was rejected, return the rejection message in a user-friendly format
+    // If the query was rejected, return the rejection message
     if (nlpResult.isRejected) {
       return res.json({
         success: false,
@@ -796,22 +1058,24 @@ const createSegmentationFromNLP = async (req, res) => {
     const segmentId = `segment:${segmentNameSlug}`;
     const now = new Date().toISOString();
 
+    // Transform filter criteria to storage format
+    const storageFilterCriteria = transformFilterCriteriaForStorage(nlpResult.filter_criteria);
+
     // Insert into segmentation table
     const { error: segmentError } = await supabase
       .from('segmentation')
       .insert({
         segment_id: segmentId,
         segment_name: segmentName,
-        description: description,
+        description: description || '',
         business_id: user.business_id,
         created_by_user_id: user.user_id,
         created_at: now,
         updated_at: now,
         status: 'active',
-        filter_criteria: {
-          nlp_query: nlpQuery,
-          sql_query: nlpResult.sqlQuery
-        },
+          // nlp_query: nlpQuery,
+          // sql_query: nlpResult.sqlQuery,
+          filter_criteria: storageFilterCriteria,  // Add transformed filter criteria
         dataset: 'customers'
       });
 
@@ -852,15 +1116,14 @@ const createSegmentationFromNLP = async (req, res) => {
       customers = [];
     }
 
-    // Insert matching customers into segment_customers table
-    const segmentCustomers = customers.map(customer => ({
-      customer_id: customer.customer_id,
-      segment_id: segmentId,
-      assigned_at: now
-    }));
-
     // Only insert if we have customers
-    if (segmentCustomers.length > 0) {
+    if (customers.length > 0) {
+      const segmentCustomers = customers.map(customer => ({
+        customer_id: customer.customer_id,
+        segment_id: segmentId,
+        assigned_at: now
+      }));
+
       const { error: customersError } = await supabase
         .from('segment_customers')
         .insert(segmentCustomers);
@@ -881,7 +1144,8 @@ const createSegmentationFromNLP = async (req, res) => {
       message: "Segmentation created successfully",
       data: {
         segment_id: segmentId,
-        customer_count: customers.length
+        customer_count: customers.length,
+        filter_criteria: storageFilterCriteria  // Return the transformed filter criteria in the response
       }
     });
   } catch (error) {
