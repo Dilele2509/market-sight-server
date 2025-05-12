@@ -146,7 +146,7 @@ const syncSegmentToSheet = async (req, res) => {
   // Convert create_new to boolean if it's a string
   const shouldCreateNew = create_new === true || create_new === 'true';
 
-  logger.info('Syncing segment to Google Sheets', {
+  console.log('Syncing segment to Google Sheets', {
     user_id: user?.user_id,
     segment_id,
     sheet_url,
@@ -178,7 +178,6 @@ const syncSegmentToSheet = async (req, res) => {
       .from('segmentation')
       .select('*')
       .eq('segment_id', segment_id)
-      .eq('business_id', user.business_id)
       .single();
 
     if (segmentError || !segment) {

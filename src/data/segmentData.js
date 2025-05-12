@@ -150,7 +150,7 @@ const deleteSegmentItem = async (segment_id) => {
     try {
         const { error } = await supabase
             .from('segmentation')
-            .delete() 
+            .delete()
             .eq('segment_id', segment_id);
 
         if (error) throw error;
@@ -162,10 +162,56 @@ const deleteSegmentItem = async (segment_id) => {
     }
 }
 
+const insertSegmentCustomersToSupabase = async (segment_id, data) => {
+    if (!Array.isArray(data) || data.length === 0) {
+        throw new Error('Invalid or empty data array');
+    }
+
+    const customerIds = data.map(item => item.customer_id);
+
+    // 1. Get existing records
+    const { data: existingRecords, error: fetchError } = await supabase
+        .from('segment_customers')
+        .select('customer_id')
+        .eq('segment_id', segment_id)
+        .in('customer_id', customerIds);
+
+    if (fetchError) {
+        throw new Error(fetchError.message);
+    }
+
+    const existingCustomerIds = new Set((existingRecords || []).map(rec => rec.customer_id));
+
+    // 2. Filter out already existing customer_ids
+    const newEntries = data.filter(item => !existingCustomerIds.has(item.customer_id));
+
+    if (newEntries.length === 0) {
+        return []; // All already existed
+    }
+
+    const assigned_at = new Date().toISOString();
+    const insertPayload = newEntries.map(item => ({
+        segment_id,
+        customer_id: item.customer_id,
+        assigned_at,
+    }));
+
+    const { data: inserted, error: insertError } = await supabase
+        .from('segment_customers')
+        .insert(insertPayload);
+
+    if (insertError) {
+        throw new Error(insertError.message);
+    }
+
+    return inserted;
+};
+
 export {
     saveOrUpdateSegment,
     checkSegmentExists,
     getSegmentByUser,
     updateStatus,
-    deleteSegmentItem
+    deleteSegmentItem,
+    insertSegmentCustomersToSupabase
 };

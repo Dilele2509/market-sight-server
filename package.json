@@ -13,7 +13,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.50.3",
+    "@anthropic-ai/sdk": "^0.50.4",
     "@supabase/supabase-js": "^2.39.3",
     "cors": "^2.8.5",
     "csv-parse": "^5.5.3",

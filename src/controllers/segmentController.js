@@ -1,4 +1,4 @@
-import { checkSegmentExists, saveOrUpdateSegment, getSegmentByUser, updateStatus } from "../data/segmentData.js";
+import { checkSegmentExists, saveOrUpdateSegment, getSegmentByUser, updateStatus, insertSegmentCustomersToSupabase } from "../data/segmentData.js";
 
 const allSegmentByUser = async (req, res) => {
     try {
@@ -113,10 +113,27 @@ const deleteSegment = async (req, res) => {
     }
 }
 
+const insertSegmentCustomer = async (req, res) => {
+    try {
+        const { segment_id, data } = req.body;
+
+        const inserted = await insertSegmentCustomersToSupabase(segment_id, data);
+
+        res.status(200).json({
+            message: 'Data inserted successfully',
+            inserted,
+        });
+    } catch (err) {
+        console.error('Insert segment error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+};
+
 export {
     saveSegment,
     checkSegment,
     allSegmentByUser,
     updateStatusSegment,
-    deleteSegment
+    deleteSegment,
+    insertSegmentCustomer
 };

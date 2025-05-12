@@ -19,6 +19,7 @@ const SCOPES = [
 const initiateGoogleAuth = async (req, res) => {
   const user = req.user;
 
+  console.log('check gg: ',user);
   logger.info('Initiating Google OAuth flow', {
     user_id: user?.user_id
   });
