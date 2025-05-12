@@ -7,27 +7,158 @@ import { OPERATORS, EVENT_CONDITION_TYPES, FREQUENCY_OPTIONS, TIME_PERIOD_OPTION
 class ValueStandardizationService {
   constructor() {
     this.cache = new Map();
+    this.businessMappingsCache = new Map();
     this.similarityThreshold = 0.8;
+    this.defaultMappings = {
+      gender: {
+        'female': 'F', 
+        'women': 'F', 
+        'woman': 'F', 
+        'nữ': 'F',
+        'male': 'M', 
+        'men': 'M', 
+        'man': 'M', 
+        'nam': 'M'
+      },
+      payment_method: {
+        'cash': 'CASH', 
+        'tiền mặt': 'CASH',
+        'credit card': 'CREDIT_CARD', 
+        'credit': 'CREDIT_CARD', 
+        'card': 'CREDIT_CARD', 
+        'thẻ tín dụng': 'CREDIT_CARD',
+        'bank transfer': 'BANK_TRANSFER', 
+        'transfer': 'BANK_TRANSFER', 
+        'chuyển khoản': 'BANK_TRANSFER'
+      },
+      store_type: {
+        'regular store': 'STORE', 
+        'store': 'STORE', 
+        'cửa hàng': 'STORE',
+        'supermarket': 'SUPERMARKET', 
+        'siêu thị': 'SUPERMARKET'
+      }
+    };
   }
 
   // Normalize text by removing accents and converting to lowercase
   normalizeText(text) {
-    return removeAccents(text.toLowerCase().trim());
+    if (!text) return '';
+    return removeAccents(String(text).toLowerCase().trim());
+  }
+
+  // Get business-specific mappings
+  async getBusinessMappings(businessId) {
+    if (!businessId) return this.defaultMappings;
+
+    // Check cache first
+    const cacheKey = `business_mappings:${businessId}`;
+    if (this.businessMappingsCache.has(cacheKey)) {
+      return this.businessMappingsCache.get(cacheKey);
+    }
+
+    try {
+      // Fetch business-specific mappings from database
+      const { data: businessMappings, error } = await supabase
+        .from('business_value_mappings')
+        .select('*')
+        .eq('business_id', businessId);
+
+      if (error) {
+        logger.error('Error fetching business mappings:', { error, businessId });
+        return this.defaultMappings;
+      }
+
+      if (!businessMappings || businessMappings.length === 0) {
+        this.businessMappingsCache.set(cacheKey, this.defaultMappings);
+        return this.defaultMappings;
+      }
+
+      // Transform the data into a structured object
+      const mappings = { ...this.defaultMappings };
+      
+      for (const mapping of businessMappings) {
+        const { mapping_type, input_value, standard_value } = mapping;
+        
+        if (!mappings[mapping_type]) {
+          mappings[mapping_type] = {};
+        }
+        
+        mappings[mapping_type][this.normalizeText(input_value)] = standard_value;
+      }
+
+      // Cache the result
+      this.businessMappingsCache.set(cacheKey, mappings);
+      return mappings;
+    } catch (error) {
+      logger.error('Error processing business mappings:', { error, businessId });
+      return this.defaultMappings;
+    }
+  }
+
+  // Get field schema
+  async getBusinessFieldSchema(businessId) {
+    if (!businessId) return null;
+
+    // Check cache first
+    const cacheKey = `business_field_schema:${businessId}`;
+    if (this.businessMappingsCache.has(cacheKey)) {
+      return this.businessMappingsCache.get(cacheKey);
+    }
+
+    try {
+      // Fetch business-specific field schema
+      const { data: fieldSchema, error } = await supabase
+        .from('business_field_schema')
+        .select('*')
+        .eq('business_id', businessId);
+
+      if (error || !fieldSchema || fieldSchema.length === 0) {
+        return null;
+      }
+
+      // Transform to usable format
+      const schema = {};
+      for (const field of fieldSchema) {
+        if (!schema[field.table_name]) {
+          schema[field.table_name] = {};
+        }
+        schema[field.table_name][field.field_name] = field.field_type;
+      }
+
+      // Cache the result
+      this.businessMappingsCache.set(cacheKey, schema);
+      return schema;
+    } catch (error) {
+      logger.error('Error fetching business field schema:', { error, businessId });
+      return null;
+    }
   }
 
   // Get standard value using multiple approaches
-  async getStandardValue(mappingType, inputValue) {
+  async getStandardValue(mappingType, inputValue, businessId) {
+    if (!inputValue) return inputValue;
+    
     const normalizedInput = this.normalizeText(inputValue);
-    const cacheKey = `${mappingType}:${normalizedInput}`;
+    const cacheKey = `${businessId}:${mappingType}:${normalizedInput}`;
 
     // Check cache first
     if (this.cache.has(cacheKey)) {
       return this.cache.get(cacheKey);
     }
 
-    // 1. Try exact match from database
+    // 1. Try exact match from business-specific mappings
+    const businessMappings = await this.getBusinessMappings(businessId);
+    if (businessMappings[mappingType] && 
+        businessMappings[mappingType][normalizedInput]) {
+      const value = businessMappings[mappingType][normalizedInput];
+      this.cache.set(cacheKey, value);
+      return value;
+    }
+
+    // 2. Try database exact match
     const { data: exactMatch } = await supabase
-      .from('value_mappings')
+      .from('business_value_mappings')
       .select('standard_value')
       .eq('mapping_type', mappingType)
       .eq('input_value', normalizedInput)
@@ -38,9 +169,27 @@ class ValueStandardizationService {
       return exactMatch.standard_value;
     }
 
-    // 2. Try fuzzy matching
+    // 3. Try fuzzy matching against business mappings
+    if (businessMappings[mappingType]) {
+      const businessMappingKeys = Object.keys(businessMappings[mappingType]);
+      if (businessMappingKeys.length > 0) {
+        const bestMatch = stringSimilarity.findBestMatch(
+          normalizedInput,
+          businessMappingKeys
+        );
+
+        if (bestMatch.bestMatch.rating >= this.similarityThreshold) {
+          const matchedKey = businessMappingKeys[bestMatch.bestMatchIndex];
+          const value = businessMappings[mappingType][matchedKey];
+          this.cache.set(cacheKey, value);
+          return value;
+        }
+      }
+    }
+
+    // 4. Try fuzzy matching against general database
     const { data: allMappings } = await supabase
-      .from('value_mappings')
+      .from('business_value_mappings')
       .select('input_value, standard_value')
       .eq('mapping_type', mappingType);
 
@@ -57,7 +206,7 @@ class ValueStandardizationService {
       }
     }
 
-    // 3. Apply business rules for specific mapping types
+    // 5. Apply general business rules as last resort
     const standardizedValue = this.applyBusinessRules(mappingType, normalizedInput);
     this.cache.set(cacheKey, standardizedValue);
     return standardizedValue;
@@ -134,9 +283,9 @@ class ValueStandardizationService {
   }
 
   // New method for standardizing filter criteria from Claude's response
-  async standardizeFilterCriteria(filterCriteria) {
+  async standardizeFilterCriteria(filterCriteria, user) {
     try {
-      logger.info('Standardizing filter criteria values');
+      logger.info('Standardizing filter criteria values', { businessId: user?.business_id });
       
       if (!filterCriteria || !filterCriteria.conditions || !Array.isArray(filterCriteria.conditions)) {
         logger.error('Invalid filter criteria structure', { filterCriteria });
@@ -146,11 +295,22 @@ class ValueStandardizationService {
       // Create a deep copy to avoid modifying the original
       const standardizedCriteria = JSON.parse(JSON.stringify(filterCriteria));
       
+      // Get business-specific field schema if available
+      const businessFieldSchema = await this.getBusinessFieldSchema(user?.business_id);
+      
       // Process each condition
       standardizedCriteria.conditions = await Promise.all(standardizedCriteria.conditions.map(async (condition) => {
         // Handle regular attribute conditions
         if (!condition.type && condition.dataset && condition.field) {
-          const fieldType = this.getFieldType(condition.dataset, condition.field);
+          // Get field type - first from business schema, fallback to default
+          let fieldType;
+          if (businessFieldSchema && 
+              businessFieldSchema[condition.dataset] && 
+              businessFieldSchema[condition.dataset][condition.field]) {
+            fieldType = businessFieldSchema[condition.dataset][condition.field];
+          } else {
+            fieldType = this.getFieldType(condition.dataset, condition.field);
+          }
           
           // Validate operator
           condition.operator = this.validateOperator(fieldType, condition.operator);
@@ -163,14 +323,18 @@ class ValueStandardizationService {
             }
           }
           
-          // Standardize enumerated values using existing service methods where possible
+          // Standardize enumerated values using business-specific mappings
           if (condition.value) {
-            if (['gender', 'payment_method', 'store_type'].includes(condition.field)) {
-              condition.value = await this.getStandardValue(condition.field, condition.value);
-            } else if (this.VALUE_MAPPINGS[condition.field]) {
-              const lowerCaseValue = condition.value.toString().toLowerCase();
-              if (this.VALUE_MAPPINGS[condition.field][lowerCaseValue]) {
-                condition.value = this.VALUE_MAPPINGS[condition.field][lowerCaseValue];
+            if (['gender', 'payment_method', 'store_type'].includes(condition.field) || 
+                (await this.getBusinessMappings(user?.business_id))[condition.field]) {
+              condition.value = await this.getStandardValue(condition.field, condition.value, user?.business_id);
+            }
+            
+            // Handle value2 if present (for between operators)
+            if (condition.value2 && condition.operator === 'between') {
+              if (['gender', 'payment_method', 'store_type'].includes(condition.field) || 
+                  (await this.getBusinessMappings(user?.business_id))[condition.field]) {
+                condition.value2 = await this.getStandardValue(condition.field, condition.value2, user?.business_id);
               }
             }
           }
@@ -202,40 +366,6 @@ class ValueStandardizationService {
       return filterCriteria; // Return original if processing fails
     }
   }
-
-  // Utility methods for standardizeFilterCriteria
-
-  // Value mappings
-  VALUE_MAPPINGS = {
-    gender: {
-      'female': 'F', 
-      'women': 'F', 
-      'woman': 'F', 
-      'nữ': 'F',
-      'male': 'M', 
-      'men': 'M', 
-      'man': 'M', 
-      'nam': 'M'
-    },
-    payment_method: {
-      'cash': 'CASH', 
-      'tiền mặt': 'CASH',
-      'credit card': 'CREDIT_CARD', 
-      'credit': 'CREDIT_CARD', 
-      'card': 'CREDIT_CARD', 
-      'thẻ tín dụng': 'CREDIT_CARD',
-      'bank transfer': 'BANK_TRANSFER', 
-      'transfer': 'BANK_TRANSFER', 
-      'chuyển khoản': 'BANK_TRANSFER'
-    },
-    store_type: {
-      'regular store': 'STORE', 
-      'store': 'STORE', 
-      'cửa hàng': 'STORE',
-      'supermarket': 'SUPERMARKET', 
-      'siêu thị': 'SUPERMARKET'
-    }
-  };
 
   // Function to capitalize city names properly
   capitalizeCityName(city) {

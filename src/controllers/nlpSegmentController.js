@@ -1,6 +1,5 @@
 import { getSupabase, logger } from '../data/database.js';
 import Anthropic from '@anthropic-ai/sdk';
-import { v4 as uuidv4 } from 'uuid';
 import { valueStandardizationService } from '../services/valueStandardizationService.js';
 import { generateFilterCriteria } from '../services/filterCriteriaService.js';
 import { OPERATORS, EVENT_CONDITION_TYPES, FREQUENCY_OPTIONS, TIME_PERIOD_OPTIONS } from '../constants/operators.js';
@@ -30,17 +29,46 @@ const generateSQLFromNLP = async (nlpQuery, user) => {
 You are a professional AI assistant specialized in creating customer segmentation from natural language. Your task is to convert user requirements into accurate SQL queries based on the existing database structure.
 
 ## SECURITY RULES - STRICTLY ENFORCED
-1. You MUST ONLY generate SELECT queries
-2. You MUST NEVER generate:
+1. You MUST ONLY generate READ-ONLY queries (such as SELECT or WITH CTEs)
+2. You MUST NEVER generate data-modifying queries:
    - DELETE queries
    - UPDATE queries
    - INSERT queries
    - UPSERT queries
    - DROP queries
    - ALTER queries
-   - Any other modifying queries
+   - CREATE queries
+   - TRUNCATE queries
 3. If the user requests data modification, respond with:
    "I can only help you create customer segments by retrieving information. I cannot modify or delete any data. Please use the segmentation feature to analyze your customer data."
+
+## CRITICAL: PostgreSQL Constraints
+1. When using SELECT DISTINCT, any ORDER BY expressions must appear in the SELECT list
+2. When using GROUP BY, any column in the SELECT list that is not in an aggregate function must be in the GROUP BY clause
+3. If you need to ORDER BY with aggregates when using DISTINCT, use a subquery or CTE approach
+
+## Examples of Correct Pattern for ORDER BY with DISTINCT:
+INCORRECT:
+\`\`\`sql
+SELECT DISTINCT c.* 
+FROM customers c
+JOIN transactions t ON c.customer_id = t.customer_id
+ORDER BY SUM(t.total_amount) DESC
+\`\`\`
+
+CORRECT:
+\`\`\`sql
+WITH customer_totals AS (
+  SELECT c.customer_id, SUM(t.total_amount) as total_spent
+  FROM customers c
+  JOIN transactions t ON c.customer_id = t.customer_id
+  GROUP BY c.customer_id
+)
+SELECT c.*
+FROM customers c
+JOIN customer_totals ct ON c.customer_id = ct.customer_id
+ORDER BY ct.total_spent DESC
+\`\`\`
 
 ## CRITICAL: Response Format Requirements
 You MUST ALWAYS return a complete JSON response with the SQL query, explanation, AND filter operators. The response MUST follow this exact structure:
@@ -264,15 +292,15 @@ Your response will be validated for:
 
 | Natural Language Term | Database Field | Standard Value |
 |----------------------|----------------|----------------|
-| female, women        | c.gender | 'F' |
-| male, men | c.gender | 'M' |
-| customer's city X | c.city | 'City Name' (proper capitalization) |
-| store in city X | s.city | 'City Name' (proper capitalization) |
-| cash | t.payment_method | 'CASH' |
-| credit card | t.payment_method | 'CREDIT_CARD' |
-| bank transfer | t.payment_method | 'BANK_TRANSFER' |
-| regular store | s.store_type | 'STORE' |
-| supermarket | s.store_type | 'SUPERMARKET' |
+| female, women         | c.gender       | 'F'            |
+| male, men             | c.gender       | 'M'            |
+| customer's city X     | c.city         | 'City Name' (proper capitalization) |
+| store in city X       | s.city         | 'City Name' (proper capitalization) |
+| cash                  | t.payment_method | 'CASH'       |
+| credit card           | t.payment_method | 'CREDIT_CARD'   |
+| bank transfer         | t.payment_method | 'BANK_TRANSFER' |
+| regular store         | s.store_type   | 'STORE'        |
+| supermarket           | s.store_type   | 'SUPERMARKET'  |
 
 ### Step 3: Build SQL Query
 - Start with standard structure:
@@ -422,12 +450,25 @@ Natural language query: ${nlpQuery}`;
     let response;
     try {
       // Clean the response text before parsing JSON
-      const cleanedResponse = message.content[0].text
+      const responseText = message.content[0].text.trim();
+      const cleanedResponse = responseText
         .replace(/\n/g, ' ')
         .replace(/\r/g, '')
         .replace(/\t/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
+
+      // Check if the response starts with a curly brace (JSON) or is plain text
+      const isJsonResponse = responseText.trim().startsWith('{');
+      
+      // Handle plain text responses
+      if (!isJsonResponse) {
+        logger.info('Received plain text response from AI', { response: responseText });
+        return {
+          isRejected: true,
+          message: responseText
+        };
+      }
 
       // Check if the response is a rejection message
       if (cleanedResponse.includes("I can only help you create customer segments") ||
@@ -446,7 +487,12 @@ Natural language query: ${nlpQuery}`;
           response: cleanedResponse,
           error: parseError.message 
         });
-        throw new Error('Invalid response format from AI. Please try rephrasing your query.');
+        
+        // Return the original text response when JSON parsing fails
+        return {
+          isRejected: true,
+          message: responseText || "The AI couldn't generate a proper query. Please try rephrasing your question to focus on customer segmentation."
+        };
       }
       
       // Validate response structure
@@ -462,34 +508,36 @@ Natural language query: ${nlpQuery}`;
 
       // Use filter criteria service to standardize values and handle operators
       // The service will use the filter_criteria from Claude as a base and enhance it
-      const enhancedFilterCriteria = await valueStandardizationService.standardizeFilterCriteria(response.filter_criteria);
+      const enhancedFilterCriteria = await valueStandardizationService.standardizeFilterCriteria(response.filter_criteria, user);
 
-      // Security validation - ensure only SELECT queries
+      // Security validation - ensure read-only queries
       const upperSqlQuery = response.sql_query.trim().toUpperCase();
-      if (!upperSqlQuery.startsWith('SELECT')) {
-        logger.error('Security violation: Non-SELECT query detected', {
+      if (!upperSqlQuery.startsWith('SELECT') && !upperSqlQuery.startsWith('WITH')) {
+        logger.error('Security violation: Non-read-only query detected', {
           query: response.sql_query,
           user: user.user_id
         });
-        throw new Error('Only SELECT queries are allowed for customer segmentation');
+        throw new Error('Only read-only queries (SELECT or WITH) are allowed for customer segmentation');
       }
 
-      // Additional security checks
+      // Additional security checks for data modification operations
       const dangerousKeywords = [
         'DELETE', 'UPDATE', 'INSERT', 'UPSERT', 'DROP', 'ALTER', 'TRUNCATE',
         'CREATE', 'MODIFY', 'REMOVE', 'REPLACE'
       ];
       
-      const containsDangerousKeyword = dangerousKeywords.some(keyword => 
-        upperSqlQuery.includes(keyword)
-      );
+      const containsDangerousKeyword = dangerousKeywords.some(keyword => {
+        // Check for dangerous keywords as full words, not as parts of other words
+        const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+        return regex.test(upperSqlQuery);
+      });
 
       if (containsDangerousKeyword) {
         logger.error('Security violation: Dangerous keyword detected', {
           query: response.sql_query,
           user: user.user_id
         });
-        throw new Error('Query contains dangerous operations. Only SELECT queries are allowed.');
+        throw new Error('Query contains dangerous operations. Only read-only queries are allowed.');
       }
 
       // Validate explanation structure
@@ -514,21 +562,57 @@ Natural language query: ${nlpQuery}`;
         .replace(/GROUP BY/g, '\nGROUP BY')
         .replace(/ORDER BY/g, '\nORDER BY')
         .replace(/HAVING/g, '\nHAVING')
+        .replace(/WITH/g, '\nWITH')
         .trim();
 
       // Clean the SQL query
       let finalSqlQuery = response.sql_query.trim().replace(/;$/, '');
 
-      // Final security check before execution
-      if (!finalSqlQuery.toUpperCase().startsWith('SELECT DISTINCT C.*')) {
-        logger.error('Security violation: Query does not start with SELECT DISTINCT c.*', {
-          query: finalSqlQuery,
-          user: user.user_id
-        });
-        throw new Error('Query must start with SELECT DISTINCT c.* for customer segmentation');
+      // Check if query is using DISTINCT with an ORDER BY or aggregate function
+      const hasDistinct = finalSqlQuery.toUpperCase().includes("SELECT DISTINCT");
+      const hasOrderBy = finalSqlQuery.toUpperCase().includes("ORDER BY");
+      const hasAggregate = /SUM\(|AVG\(|MAX\(|MIN\(|COUNT\(/.test(finalSqlQuery.toUpperCase());
+      
+      // If it has DISTINCT and either ORDER BY or aggregates, verify if using CTE/subquery approach
+      if (hasDistinct && (hasOrderBy || hasAggregate)) {
+        const hasCTE = finalSqlQuery.toUpperCase().includes("WITH ");
+        const hasSubquery = finalSqlQuery.toUpperCase().includes(") AS ");
+        
+        // If not using CTE or subquery, transform the query to use CTE
+        if (!hasCTE && !hasSubquery) {
+          logger.info('Transforming query to use CTE for DISTINCT with ORDER BY/aggregates');
+          
+          // Extract ORDER BY clause
+          const orderByMatch = finalSqlQuery.match(/ORDER BY\s+(.+?)(?:LIMIT|$)/i);
+          const orderByClause = orderByMatch ? orderByMatch[1].trim() : '';
+          
+          // Remove ORDER BY from original query
+          finalSqlQuery = finalSqlQuery.replace(/ORDER BY\s+(.+?)(?:LIMIT|$)/i, '');
+          
+          // Extract LIMIT clause if present
+          const limitMatch = finalSqlQuery.match(/LIMIT\s+(\d+)/i);
+          const limitClause = limitMatch ? `LIMIT ${limitMatch[1]}` : '';
+          
+          // Remove LIMIT from original query if present
+          finalSqlQuery = finalSqlQuery.replace(/LIMIT\s+\d+/i, '');
+          
+          // Transform into CTE approach
+          if (orderByClause) {
+            finalSqlQuery = `WITH customer_data AS (
+              ${finalSqlQuery}
+            )
+            SELECT * FROM customer_data
+            ORDER BY ${orderByClause} ${limitClause}`;
+          }
+        }
       }
 
       // Replace [business_id] placeholder with actual business_id
+      if (!user || !user.business_id) {
+        logger.error('Business ID missing from user object', { user });
+        throw new Error('Business ID is required for query execution');
+      }
+      
       finalSqlQuery = finalSqlQuery.replace(/\[business_id\]/g, user.business_id);
 
       // Add business_id filter if not present
@@ -562,7 +646,12 @@ Natural language query: ${nlpQuery}`;
         response: message.content[0].text,
         errorMessage: error.message 
       });
-      throw new Error('Failed to parse AI response: ' + error.message);
+      
+      // Return a friendly error message
+      return {
+        isRejected: true,
+        message: "I couldn't understand your request. Please try rephrasing it to focus on customer segmentation criteria."
+      };
     }
   } catch (error) {
     logger.error('Error generating SQL from NLP:', { error });
@@ -589,11 +678,12 @@ const previewSegmentation = async (req, res) => {
     // Generate SQL query from NLP
     const result = await generateSQLFromNLP(nlpQuery, user);
 
-    // If the query was rejected, return the rejection message
+    // If the query was rejected, return the rejection message in a user-friendly format
     if (result.isRejected) {
       return res.json({
         success: false,
-        error: result.message
+        error: result.message,
+        isAIResponse: true // Flag to indicate this is a direct AI response
       });
     }
 
@@ -607,8 +697,27 @@ const previewSegmentation = async (req, res) => {
       throw queryError;
     }
 
-    // Extract customers from the JSON array result
-    const customers = queryResult[0] || [];
+    // Safely extract customers from the JSON array result
+    let customers = [];
+    
+    if (queryResult && Array.isArray(queryResult) && queryResult.length > 0) {
+      // If queryResult[0] is an array, use it directly
+      if (Array.isArray(queryResult[0])) {
+        customers = queryResult[0] || [];
+      } else {
+        // If queryResult is just an array of objects directly, use that
+        customers = queryResult;
+      }
+    }
+
+    // Ensure customers is an array before mapping
+    if (!Array.isArray(customers)) {
+      logger.warn('Expected customers array but got:', { 
+        type: typeof customers, 
+        value: customers 
+      });
+      customers = [];
+    }
 
     // Transform the results to ensure we have the expected structure
     const transformedCustomers = customers.map(customer => ({
@@ -670,11 +779,12 @@ const createSegmentationFromNLP = async (req, res) => {
     // Generate SQL query from NLP
     const nlpResult = await generateSQLFromNLP(nlpQuery, user);
 
-    // If the query was rejected, return the rejection message
+    // If the query was rejected, return the rejection message in a user-friendly format
     if (nlpResult.isRejected) {
       return res.json({
         success: false,
-        error: nlpResult.message
+        error: nlpResult.message,
+        isAIResponse: true // Flag to indicate this is a direct AI response
       });
     }
 
@@ -720,8 +830,27 @@ const createSegmentationFromNLP = async (req, res) => {
       throw queryError;
     }
 
-    // Extract customers from the JSON array result
-    const customers = queryResult[0] || [];
+    // Safely extract customers from the JSON array result
+    let customers = [];
+    
+    if (queryResult && Array.isArray(queryResult) && queryResult.length > 0) {
+      // If queryResult[0] is an array, use it directly
+      if (Array.isArray(queryResult[0])) {
+        customers = queryResult[0] || [];
+      } else {
+        // If queryResult is just an array of objects directly, use that
+        customers = queryResult;
+      }
+    }
+    
+    // Ensure customers is an array before proceeding
+    if (!Array.isArray(customers)) {
+      logger.warn('Expected customers array but got:', { 
+        type: typeof customers, 
+        value: customers 
+      });
+      customers = [];
+    }
 
     // Insert matching customers into segment_customers table
     const segmentCustomers = customers.map(customer => ({
@@ -730,13 +859,16 @@ const createSegmentationFromNLP = async (req, res) => {
       assigned_at: now
     }));
 
-    const { error: customersError } = await supabase
-      .from('segment_customers')
-      .insert(segmentCustomers);
+    // Only insert if we have customers
+    if (segmentCustomers.length > 0) {
+      const { error: customersError } = await supabase
+        .from('segment_customers')
+        .insert(segmentCustomers);
 
-    if (customersError) {
-      logger.error('Error inserting segment customers:', { error: customersError });
-      throw customersError;
+      if (customersError) {
+        logger.error('Error inserting segment customers:', { error: customersError });
+        throw customersError;
+      }
     }
 
     logger.info('Segmentation created successfully', { 
