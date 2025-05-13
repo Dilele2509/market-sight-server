@@ -287,7 +287,11 @@ class ValueStandardizationService {
     try {
       logger.info('Standardizing filter criteria values', { businessId: user?.business_id });
       
-      if (!filterCriteria || !filterCriteria.conditions || !Array.isArray(filterCriteria.conditions)) {
+      // Kiểm tra cấu trúc filter criteria
+      const hasOldStructure = filterCriteria && filterCriteria.conditions && Array.isArray(filterCriteria.conditions);
+      const hasNewStructure = filterCriteria && filterCriteria.conditionGroups && Array.isArray(filterCriteria.conditionGroups);
+      
+      if (!hasOldStructure && !hasNewStructure) {
         logger.error('Invalid filter criteria structure', { filterCriteria });
         return filterCriteria;
       }
@@ -298,18 +302,20 @@ class ValueStandardizationService {
       // Get business-specific field schema if available
       const businessFieldSchema = await this.getBusinessFieldSchema(user?.business_id);
       
-      // Process each condition
-      standardizedCriteria.conditions = await Promise.all(standardizedCriteria.conditions.map(async (condition) => {
+      // Helper function to process a single condition
+      const processCondition = async (condition) => {
         // Handle regular attribute conditions
-        if (!condition.type && condition.dataset && condition.field) {
+        if (condition.type === 'attribute' && condition.field) {
           // Get field type - first from business schema, fallback to default
           let fieldType;
+          const dataset = condition.dataset || condition.datasetKey || 'customers';
+          
           if (businessFieldSchema && 
-              businessFieldSchema[condition.dataset] && 
-              businessFieldSchema[condition.dataset][condition.field]) {
-            fieldType = businessFieldSchema[condition.dataset][condition.field];
+              businessFieldSchema[dataset] && 
+              businessFieldSchema[dataset][condition.field]) {
+            fieldType = businessFieldSchema[dataset][condition.field];
           } else {
-            fieldType = this.getFieldType(condition.dataset, condition.field);
+            fieldType = this.getFieldType(dataset, condition.field);
           }
           
           // Validate operator
@@ -342,22 +348,73 @@ class ValueStandardizationService {
         
         // Handle event conditions
         if (condition.type === 'event') {
-          condition.event_condition_type = this.validateEventConditionType(condition.event_condition_type);
+          // Handle new structure (eventType) or old structure (event_condition_type)
+          if (condition.eventType) {
+            condition.eventType = this.validateEventConditionType(condition.eventType);
+          } else if (condition.event_condition_type) {
+            condition.event_condition_type = this.validateEventConditionType(condition.event_condition_type);
+          }
           
-          // Handle frequency and time period for purchase events
-          if (condition.frequency && condition.time_period) {
+          // Handle frequency and time period for purchase events - new structure
+          if (condition.frequency && condition.timePeriod) {
+            condition.frequency = this.validateFrequencyOperator(condition.frequency);
+            condition.timePeriod = this.validateTimePeriodUnit(condition.timePeriod);
+          }
+          // Handle frequency and time period - old structure
+          else if (condition.frequency && condition.time_period) {
             condition.frequency.operator = this.validateFrequencyOperator(condition.frequency.operator);
             condition.time_period.unit = this.validateTimePeriodUnit(condition.time_period.unit);
           }
           
           // Handle amount conditions
-          if (condition.event_condition_type === 'amount' && condition.operator) {
+          if ((condition.eventType === 'amount' || condition.event_condition_type === 'amount') && condition.operator) {
             condition.operator = this.validateOperator('number', condition.operator);
+          }
+          
+          // Process attribute conditions if any
+          if (condition.attributeConditions && Array.isArray(condition.attributeConditions)) {
+            condition.attributeConditions = await Promise.all(
+              condition.attributeConditions.map(async (attr) => {
+                // Determine field type
+                let attrFieldType = 'text';
+                if (attr.field) {
+                  if (attr.field.includes('date') || attr.field.includes('time')) {
+                    attrFieldType = 'datetime';
+                  } else if (attr.field.includes('amount') || attr.field.includes('quantity') || 
+                           attr.field.includes('price') || attr.field.includes('cost')) {
+                    attrFieldType = 'number';
+                  }
+                }
+                
+                // Validate operator
+                attr.operator = this.validateOperator(attrFieldType, attr.operator);
+                
+                return attr;
+              })
+            );
           }
         }
         
         return condition;
-      }));
+      };
+      
+      // Process old structure with conditions array
+      if (hasOldStructure) {
+        standardizedCriteria.conditions = await Promise.all(
+          standardizedCriteria.conditions.map(processCondition)
+        );
+      }
+      
+      // Process new structure with conditionGroups
+      if (hasNewStructure) {
+        for (const group of standardizedCriteria.conditionGroups) {
+          if (group.conditions && Array.isArray(group.conditions)) {
+            group.conditions = await Promise.all(
+              group.conditions.map(processCondition)
+            );
+          }
+        }
+      }
       
       logger.info('Filter criteria standardization completed');
       return standardizedCriteria;
