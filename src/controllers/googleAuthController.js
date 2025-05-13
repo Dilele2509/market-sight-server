@@ -19,7 +19,7 @@ const SCOPES = [
 const initiateGoogleAuth = async (req, res) => {
   const user = req.user;
 
-  console.log('check gg: ',user);
+  console.log('check gg: ', user);
   logger.info('Initiating Google OAuth flow', {
     user_id: user?.user_id
   });
@@ -126,23 +126,24 @@ const handleOAuthCallback = async (req, res) => {
     }
 
     // Return success response
-    res.json({
-      success: true,
-      message: "Google OAuth successful",
-      data: {
-        user_id,
-        business_id: userData.business_id,
-        scope: tokens.scope,
-        expiry_date: new Date(tokens.expiry_date).toISOString(),
-        token_type: tokens.token_type
-      }
-    });
+    const result = {
+      user_id,
+      business_id: userData.business_id,
+      scope: tokens.scope,
+      expiry_date: new Date(tokens.expiry_date).toISOString(),
+      token_type: tokens.token_type
+    };
+
+    // Encode data as base64 to avoid query string issues
+    const resultEncoded = Buffer.from(JSON.stringify(result)).toString('base64');
+
+    res.redirect(`http://localhost:8080/sync-config?success=true&data=${encodeURIComponent(resultEncoded)}`);
   } catch (error) {
     logger.error('Error handling OAuth callback', {
       error: error.message,
       stack: error.stack
     });
-    
+
     res.status(400).json({
       success: false,
       error: error.message
