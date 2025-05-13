@@ -141,7 +141,7 @@ const getAvailableSegments = async (req, res) => {
 // Sync segment to Google Sheets
 const syncSegmentToSheet = async (req, res) => {
   const user = req.user;
-  const { segment_id, sheet_url, new_file_name, create_new } = req.body;
+  const { segment_id, segment_name, sheet_url, new_file_name, create_new } = req.body;
 
   // Convert create_new to boolean if it's a string
   const shouldCreateNew = create_new === true || create_new === 'true';
@@ -174,15 +174,15 @@ const syncSegmentToSheet = async (req, res) => {
     const supabase = getSupabase();
 
     // Get segment details
-    const { data: segment, error: segmentError } = await supabase
-      .from('segmentation')
-      .select('*')
-      .eq('segment_id', segment_id)
-      .single();
+    // const { data: segment, error: segmentError } = await supabase
+    //   .from('segmentation')
+    //   .select('*')
+    //   .eq('segment_id', segment_id)
+    //   .single();
 
-    if (segmentError || !segment) {
-      throw new Error('Segment not found');
-    }
+    // if (segmentError || !segment) {
+    //   throw new Error('Segment not found');
+    // }
 
     // Get segment customers with their details
     const { data: customers, error: customersError } = await supabase
@@ -237,7 +237,7 @@ const syncSegmentToSheet = async (req, res) => {
     if (shouldCreateNew) {
       // Create new spreadsheet with custom name or default name
       const fileMetadata = {
-        name: new_file_name || `${segment.segment_name} - Customer Segment`,
+        name: new_file_name || `${segment_name} - Customer Segment`,
         mimeType: 'application/vnd.google-apps.spreadsheet'
       };
 
@@ -257,7 +257,7 @@ const syncSegmentToSheet = async (req, res) => {
     }
 
     // Use segment name as sheet name
-    const sheetName = segment.segment_name;
+    const sheetName = segment_name;
 
     // Check if sheet exists in the file
     const spreadsheet = await sheets.spreadsheets.get({
@@ -323,7 +323,7 @@ const syncSegmentToSheet = async (req, res) => {
         customer.customers.registration_date ? new Date(customer.customers.registration_date).toISOString() : '',
         customer.customers.address || '',
         customer.customers.city || '',
-        segment.segment_name,
+        segment_name,
         customer.assigned_at
       ])
     ];
