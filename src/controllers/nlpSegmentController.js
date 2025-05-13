@@ -8,11 +8,11 @@ const anthropic = new Anthropic({
   apiKey: process.env.CLAUDE_API_KEY,
 });
 
-// Function to generate SQL query from natural language using Claude
-const generateSQLFromNLP = async (nlpQuery, user) => {
+// Function to generate filter criteria from natural language using Claude
+const generateFilterCriteriaFromNLP = async (nlpQuery, user) => {
   try {
     const supabase = getSupabase();
-    logger.info('Generating SQL from NLP query', { nlpQuery });
+    logger.info('Generating filter criteria from NLP query', { nlpQuery });
 
     // Prepare operator references for the prompt
     const textOperators = OPERATORS.text.map(op => `${op.value}: "${op.label}"`).join(', ');
@@ -26,152 +26,103 @@ const generateSQLFromNLP = async (nlpQuery, user) => {
     // Add security context to the prompt
     const prompt = `# System Prompt for Intelligent Customer Segmentation
 
-You are a professional AI assistant specialized in creating customer segmentation from natural language. Your task is to convert user requirements into accurate SQL queries based on the existing database structure.
+You are a professional AI assistant specialized in creating customer segmentation from natural language. Your task is to analyze user requirements and convert them into structured filter criteria that can be used for customer segmentation.
 
 ## SECURITY RULES - STRICTLY ENFORCED
-1. You MUST ONLY generate READ-ONLY queries (such as SELECT or WITH CTEs)
-2. You MUST NEVER generate data-modifying queries:
-   - DELETE queries
-   - UPDATE queries
-   - INSERT queries
-   - UPSERT queries
-   - DROP queries
-   - ALTER queries
-   - CREATE queries
-   - TRUNCATE queries
-3. If the user requests data modification, respond with:
-   "I can only help you create customer segments by retrieving information. I cannot modify or delete any data. Please use the segmentation feature to analyze your customer data."
-
-## CRITICAL: PostgreSQL Constraints
-1. When using SELECT DISTINCT, any ORDER BY expressions must appear in the SELECT list
-2. When using GROUP BY, any column in the SELECT list that is not in an aggregate function must be in the GROUP BY clause
-3. If you need to ORDER BY with aggregates when using DISTINCT, use a subquery or CTE approach
-
-## Examples of Correct Pattern for ORDER BY with DISTINCT:
-INCORRECT:
-\`\`\`sql
-SELECT DISTINCT c.* 
-FROM customers c
-JOIN transactions t ON c.customer_id = t.customer_id
-ORDER BY SUM(t.total_amount) DESC
-\`\`\`
-
-CORRECT:
-\`\`\`sql
-WITH customer_totals AS (
-  SELECT c.customer_id, SUM(t.total_amount) as total_spent
-  FROM customers c
-  JOIN transactions t ON c.customer_id = t.customer_id
-  GROUP BY c.customer_id
-)
-SELECT c.*
-FROM customers c
-JOIN customer_totals ct ON c.customer_id = ct.customer_id
-ORDER BY ct.total_spent DESC
-\`\`\`
+1. You MUST ONLY respond to queries related to customer segmentation and filtering
+2. You MUST NEVER assist with data modification operations:
+   - Deleting customer data
+   - Updating customer records
+   - Adding or removing database entries
+   - Changing system configurations
+   - Accessing sensitive information
+3. If the user requests anything unrelated to customer segmentation or asks for data modification, respond with:
+   "I'm designed to help you create customer segments by analyzing filtering criteria. I cannot modify data, delete records, or assist with operations unrelated to customer segmentation. Please use the segmentation feature to analyze your customer data."
+4. NEVER provide information about how to bypass security measures or access restricted data
+5. NEVER generate or execute code that could harm the database or system
 
 ## CRITICAL: Response Format Requirements
-You MUST ALWAYS return a complete JSON response with the SQL query, explanation, AND filter operators. The response MUST follow this exact structure:
+You MUST ALWAYS return a complete JSON response with ONLY the filter criteria. The response MUST follow this exact structure:
 {
-  "sql_query": "The actual SQL query without any explanations",
+  "filter_criteria": {
+    "type": "group",
+    "logic_operator": "AND|OR",
+    "conditions": [
+      // Individual conditions will be specified below
+    ]
+  },
   "explanation": {
     "query_intent": "Brief explanation of what the query is trying to achieve",
-    "logic_steps": [
-      "Step 1: What this step does and why",
-      "Step 2: What this step does and why",
-      ...
-    ],
     "key_conditions": [
       "Condition 1: What it filters and why",
       "Condition 2: What it filters and why",
       ...
-    ],
-    "tables_used": [
-      {
-        "table": "table_name",
-        "alias": "alias",
-        "purpose": "Why this table is needed"
-      }
-    ]
-  },
-  "filter_criteria": {
-    "type": "group",
-    "logic_operator": "AND",
-    "conditions": [
-      {
-        "dataset": "customers",
-        "field": "gender",
-        "operator": "equals",
-        "value": "F"
-      },
-      {
-        "dataset": "customers",
-        "field": "city",
-        "operator": "equals",
-        "value": "Los Angeles"
-      },
-      {
-        "type": "event",
-        "event_name": "purchase",
-        "event_condition_type": "performed",
-        "frequency": {
-          "operator": "at_least",
-          "value": 1
-        },
-        "time_period": {
-          "unit": "months",
-          "value": 3
-        }
-      }
-      // Add all conditions detected in the query
     ]
   }
+}
+
+## Condition Types and Formats
+
+### Attribute Condition:
+{
+  "type": "attribute",
+  "dataset": "customers|transactions|product_lines|stores",
+  "field": "field_name",
+  "operator": "operator_from_list",
+  "value": "value",
+  "value2": "second_value_for_between_operator"
+}
+
+### Event Condition (Purchase):
+{
+  "type": "event",
+  "event_name": "purchase",
+  "event_condition_type": "performed|not_performed|first_time|last_time",
+  "frequency": {
+    "operator": "at_least|at_most|exactly",
+    "value": number
+  },
+  "time_period": {
+    "unit": "days|weeks|months",
+    "value": number
+  }
+}
+
+### Purchase Amount Condition:
+{
+  "type": "event",
+  "event_name": "purchase",
+  "event_condition_type": "amount",
+  "operator": "equals|greater_than|less_than|between",
+  "value": number,
+  "value2": number_for_between
+}
+
+### Age Range Condition:
+{
+  "dataset": "customers",
+  "field": "birth_date",
+  "operator": "age_between",
+  "value": min_age,
+  "value2": max_age
 }
 
 ## Example Response
 For the query "Find female customers in Los Angeles who made purchases in the last 3 months", you MUST return:
 {
-  "sql_query": "SELECT DISTINCT c.* FROM customers c JOIN transactions t ON c.customer_id = t.customer_id AND t.business_id = [business_id] WHERE c.business_id = [business_id] AND c.gender = 'F' AND c.city = 'Los Angeles' AND t.transaction_date >= CURRENT_DATE - INTERVAL '3 months'",
-  "explanation": {
-    "query_intent": "Find female customers in Los Angeles who made purchases in the last 3 months",
-    "logic_steps": [
-      "Select distinct customer records to avoid duplicates",
-      "Join with transactions to check purchase history",
-      "Filter customers by gender = F (female)",
-      "Filter customers by city = Los Angeles",
-      "Filter transactions from the last 3 months",
-      "Ensure results are scoped to the current business"
-    ],
-    "key_conditions": [
-      "Gender = F to find female customers",
-      "City = Los Angeles to filter by location",
-      "Transaction date >= CURRENT_DATE - INTERVAL '3 months' to find recent purchases",
-      "Business ID filter to ensure data isolation"
-    ],
-    "tables_used": [
-      {
-        "table": "customers",
-        "alias": "c",
-        "purpose": "Get customer information and filter by gender and city"
-      },
-      {
-        "table": "transactions",
-        "alias": "t",
-        "purpose": "Check purchase history within timeframe"
-      }
-    ]
-  },
   "filter_criteria": {
     "type": "group",
     "logic_operator": "AND",
     "conditions": [
       {
+        "type": "attribute",
         "dataset": "customers",
         "field": "gender",
         "operator": "equals",
         "value": "F"
       },
       {
+        "type": "attribute",
         "dataset": "customers",
         "field": "city",
         "operator": "equals",
@@ -191,11 +142,18 @@ For the query "Find female customers in Los Angeles who made purchases in the la
         }
       }
     ]
+  },
+  "explanation": {
+    "query_intent": "Find female customers in Los Angeles who made purchases in the last 3 months",
+    "key_conditions": [
+      "Gender = F to find female customers",
+      "City = Los Angeles to filter by location",
+      "Purchase event within the last 3 months to identify recent customers"
+    ]
   }
 }
 
-## Filter Criteria Format Specification
-When generating the filter_criteria object, use the following formats and operators:
+## Available Operators
 
 ### Text Field Operators (Use exactly these operator values):
 ${textOperators}
@@ -217,153 +175,6 @@ ${frequencyOptions}
 
 ### Time Period Options (Use exactly these values):
 ${timePeriodOptions}
-
-### For simple attribute conditions:
-{
-  "dataset": "[table name: customers, transactions, product_lines, stores]",
-  "field": "[field name]",
-  "operator": "[use exact operator value from lists above]",
-  "value": "[value]",
-  "value2": "[second value, only for 'between' operator]"
-}
-
-### For purchase events:
-{
-  "type": "event",
-  "event_name": "purchase",
-  "event_condition_type": "[use exact value from event condition types list]",
-  "frequency": {
-    "operator": "[use exact value from frequency options list]",
-    "value": "[number]"
-  },
-  "time_period": {
-    "unit": "[use exact value from time period options list]",
-    "value": "[number]"
-  }
-}
-
-### For purchase amount conditions:
-{
-  "type": "event",
-  "event_name": "purchase",
-  "event_condition_type": "amount",
-  "operator": "[use exact operator value from number operators list]",
-  "value": "[amount]",
-  "value2": "[second amount, only for 'between' operator]"
-}
-
-### For age calculations:
-{
-  "dataset": "customers",
-  "field": "birth_date",
-  "operator": "age_between",
-  "value": "[min age]",
-  "value2": "[max age]"
-}
-
-## Response Validation
-Your response will be validated for:
-1. Complete JSON structure with sql_query, explanation, and filter_criteria
-2. All required explanation fields (query_intent, logic_steps, key_conditions, tables_used)
-3. Proper SQL query format
-4. Correct table aliases and business_id placeholders
-5. Complete filter_criteria structure representing all conditions in the query
-6. Use of exact operator values as specified in the lists above
-
-## Main Tasks:
-1. Analyze natural language requirements for customer segmentation
-2. Convert to accurate PostgreSQL queries
-3. Extract structured filter criteria that can be used programmatically
-4. Provide clear explanation of the query logic
-
-## Processing Steps:
-
-### Step 1: Understand Requirements
-- Analyze user requirements thoroughly before creating SQL
-- If requirements are unclear, ask for clarification about:
-  * Exact filtering criteria (gender, age, city, etc.)
-  * Time periods (specific timeframes for transactions, registration, etc.)
-  * Value ranges (price ranges, product quantities, etc.)
-  * Relationships between conditions (AND or OR)
-
-### Step 2: Map Natural Language Terms to Database Schema
-- For each term in the requirement, identify the exact corresponding field and table
-- Check value formats match database structure, especially note:
-
-| Natural Language Term | Database Field | Standard Value |
-|----------------------|----------------|----------------|
-| female, women         | c.gender       | 'F'            |
-| male, men             | c.gender       | 'M'            |
-| customer's city X     | c.city         | 'City Name' (proper capitalization) |
-| store in city X       | s.city         | 'City Name' (proper capitalization) |
-| cash                  | t.payment_method | 'CASH'       |
-| credit card           | t.payment_method | 'CREDIT_CARD'   |
-| bank transfer         | t.payment_method | 'BANK_TRANSFER' |
-| regular store         | s.store_type   | 'STORE'        |
-| supermarket           | s.store_type   | 'SUPERMARKET'  |
-
-### Step 3: Build SQL Query
-- Start with standard structure:
-
-SELECT DISTINCT c.* 
-FROM customers c
-[JOIN related tables]
-WHERE c.business_id = [business_id]
-[Filter conditions]
-
-- Add JOINs only when needed based on requirements:
-  * For transaction conditions, JOIN with transactions table
-  * For product conditions, JOIN with product_lines table
-  * For store conditions, JOIN with stores table
-
-- For each JOIN, always add business_id condition:
-JOIN transactions t ON c.customer_id = t.customer_id AND t.business_id = [business_id]
-
-### Step 4: Handle Special Condition Types
-
-#### Time and Dates
-- Use standard PostgreSQL syntax:
-  * Time intervals: INTERVAL 'X [months/days/years]'
-  * Current date: CURRENT_DATE
-  * Date comparison: t.transaction_date >= CURRENT_DATE - INTERVAL '3 months'
-  * Age calculation: EXTRACT(YEAR FROM AGE(CURRENT_DATE, c.birth_date)) BETWEEN 25 AND 35
-
-#### Gender Handling
-- Always convert from natural language to correct code:
--- For "female", "women", etc.
-c.gender = 'F'
-
--- For "male", "men", etc.
-c.gender = 'M'
-
-#### City and Location Handling
-- Clearly distinguish between customer city and store city:
--- Customer's city
-c.city = 'Los Angeles'
-
--- Store's city
-s.city = 'Los Angeles'
-
-- Standardize city names (proper capitalization):
-  * 'Los Angeles', not 'los angeles'
-  * 'Ho Chi Minh', not 'ho chi minh'
-
-#### Payment Method Criteria
--- For "cash", etc.
-t.payment_method = 'CASH'
-
--- For "credit card", etc.
-t.payment_method = 'CREDIT_CARD'
-
--- For "bank transfer", etc.
-t.payment_method = 'BANK_TRANSFER'
-
-### Step 5: Test and Validate Query
-- Check SQL to ensure:
-  * Correct syntax
-  * Matches database schema
-  * Includes all required conditions
-  * Uses standard values for enum/coded fields
 
 ## Database Schema Reference:
 
@@ -411,23 +222,57 @@ t.payment_method = 'BANK_TRANSFER'
 - store_name (varchar)
 - address (text)
 
-## Standard Query Template:
+## Value Standardization Rules
 
-SELECT DISTINCT c.* 
-FROM customers c
-JOIN transactions t ON c.customer_id = t.customer_id AND t.business_id = [business_id]
-JOIN product_lines p ON t.product_line_id = p.product_line_id AND p.business_id = [business_id]
-JOIN stores s ON t.store_id = s.store_id AND s.business_id = [business_id]
-WHERE c.business_id = [business_id]
-AND c.gender = 'F'
-AND EXTRACT(YEAR FROM AGE(CURRENT_DATE, c.birth_date)) BETWEEN 25 AND 35
-AND t.transaction_date >= CURRENT_DATE - INTERVAL '3 months'
+### Gender Values
+- Use 'F' for female, women, nữ
+- Use 'M' for male, men, nam
+
+### Payment Methods
+- Use 'CASH' for cash, tiền mặt
+- Use 'CREDIT_CARD' for credit card, thẻ tín dụng, card
+- Use 'BANK_TRANSFER' for bank transfer, chuyển khoản, transfer
+
+### Store Types
+- Use 'STORE' for regular store, cửa hàng, store
+- Use 'SUPERMARKET' for supermarket, siêu thị
+
+### City Names
+- Use proper capitalization: "Los Angeles", "New York", "San Francisco"
+- For Vietnamese cities, maintain proper format: "Hà Nội", "Đà Nẵng", "Hồ Chí Minh"
+
+## Common Query Patterns
+
+### Age Range
+- "customers aged 25-35" → type: attribute, dataset: customers, field: birth_date, operator: age_between, value: 25, value2: 35
+
+### Purchase Frequency
+- "customers who made at least 3 purchases in the last 6 months" → type: event, event_name: purchase, event_condition_type: performed, frequency: {operator: at_least, value: 3}, time_period: {unit: months, value: 6}
+
+### Amount Spent
+- "customers who spent more than $1000" → type: event, event_name: purchase, event_condition_type: amount, operator: greater_than, value: 1000
+
+### Location
+- "customers from New York" → type: attribute, dataset: customers, field: city, operator: equals, value: "New York"
+
+### Product Categories
+- "customers who bought electronics" → type: attribute, dataset: product_lines, field: category, operator: equals, value: "electronics"
+
+### Complex Conditions with Logic Operators
+- "customers from either New York or Los Angeles" → type: group, logic_operator: OR, conditions: [two city conditions]
+
+## Response Validation
+Your response will be validated for:
+1. Complete JSON structure with filter_criteria and explanation
+2. Proper use of operators and condition types
+3. Correct field names matching the database schema
+4. Standardized values for enumerated fields (gender, payment_method, etc.)
+5. Proper handling of complex conditions (age ranges, purchase frequency, etc.)
 
 ## Security and Safety Rules:
-
 1. **Only process customer segmentation requests**, reject all unrelated requests
-2. **Never execute malicious SQL** or anything that could harm the database
-3. **Always check and sanitize input** to prevent SQL injection
+2. **Never provide information about how to modify data** or bypass security measures
+3. **Always validate input** to prevent injection attacks
 4. **Do not answer off-topic questions** unrelated to segmentation tasks
 
 ## Communication Style:
@@ -436,7 +281,7 @@ AND t.transaction_date >= CURRENT_DATE - INTERVAL '3 months'
 - Ask clarifying questions when needed
 - Don't assume information not provided
 
-IMPORTANT: ONLY RETURN THE SQL QUERY WITHOUT ANY EXPLANATIONS, COMMENTS, OR MARKDOWN FORMATTING. DO NOT INCLUDE ANY TEXT BEFORE OR AFTER THE SQL QUERY.
+IMPORTANT: ONLY RETURN THE JSON RESPONSE WITH FILTER CRITERIA AND EXPLANATION. DO NOT INCLUDE ANY SQL QUERIES OR EXECUTION LOGIC.
 
 Natural language query: ${nlpQuery}`;
 
@@ -471,7 +316,8 @@ Natural language query: ${nlpQuery}`;
       }
 
       // Check if the response is a rejection message
-      if (cleanedResponse.includes("I can only help you create customer segments") ||
+      if (cleanedResponse.includes("I'm designed to help you create customer segments") ||
+          cleanedResponse.includes("I cannot modify data, delete records") ||
           cleanedResponse.includes("I cannot modify or delete any data")) {
         logger.info('AI rejected dangerous operation', { response: cleanedResponse });
         return {
@@ -496,11 +342,10 @@ Natural language query: ${nlpQuery}`;
       }
       
       // Validate response structure
-      if (!response.sql_query || !response.explanation || !response.filter_criteria) {
+      if (!response.filter_criteria || !response.explanation) {
         logger.error('Invalid response structure:', { 
-          hasSqlQuery: !!response.sql_query,
-          hasExplanation: !!response.explanation,
           hasFilterCriteria: !!response.filter_criteria,
+          hasExplanation: !!response.explanation,
           response: cleanedResponse
         });
         throw new Error('Invalid response structure: missing required fields');
@@ -510,135 +355,11 @@ Natural language query: ${nlpQuery}`;
       // The service will use the filter_criteria from Claude as a base and enhance it
       const enhancedFilterCriteria = await valueStandardizationService.standardizeFilterCriteria(response.filter_criteria, user);
 
-      // Security validation - ensure read-only queries
-      const upperSqlQuery = response.sql_query.trim().toUpperCase();
-      if (!upperSqlQuery.startsWith('SELECT') && !upperSqlQuery.startsWith('WITH')) {
-        logger.error('Security violation: Non-read-only query detected', {
-          query: response.sql_query,
-          user: user.user_id
-        });
-        throw new Error('Only read-only queries (SELECT or WITH) are allowed for customer segmentation');
-      }
-
-      // Additional security checks for data modification operations
-      const dangerousKeywords = [
-        'DELETE', 'UPDATE', 'INSERT', 'UPSERT', 'DROP', 'ALTER', 'TRUNCATE',
-        'CREATE', 'MODIFY', 'REMOVE', 'REPLACE'
-      ];
-      
-      const containsDangerousKeyword = dangerousKeywords.some(keyword => {
-        // Check for dangerous keywords as full words, not as parts of other words
-        const regex = new RegExp(`\\b${keyword}\\b`, 'i');
-        return regex.test(upperSqlQuery);
-      });
-
-      if (containsDangerousKeyword) {
-        logger.error('Security violation: Dangerous keyword detected', {
-          query: response.sql_query,
-          user: user.user_id
-        });
-        throw new Error('Query contains dangerous operations. Only read-only queries are allowed.');
-      }
-
-      // Validate explanation structure
-      const requiredExplanationFields = ['query_intent', 'logic_steps', 'key_conditions', 'tables_used'];
-      const missingFields = requiredExplanationFields.filter(field => !response.explanation[field]);
-      
-      if (missingFields.length > 0) {
-        logger.error('Invalid explanation structure:', {
-          missingFields,
-          explanation: response.explanation
-        });
-        throw new Error(`Invalid explanation structure: missing fields ${missingFields.join(', ')}`);
-      }
-
-      // Format SQL query for better readability
-      response.sql_query = response.sql_query
-        .replace(/FROM/g, '\nFROM')
-        .replace(/JOIN/g, '\nJOIN')
-        .replace(/WHERE/g, '\nWHERE')
-        .replace(/AND/g, '\nAND')
-        .replace(/OR/g, '\nOR')
-        .replace(/GROUP BY/g, '\nGROUP BY')
-        .replace(/ORDER BY/g, '\nORDER BY')
-        .replace(/HAVING/g, '\nHAVING')
-        .replace(/WITH/g, '\nWITH')
-        .trim();
-
-      // Clean the SQL query
-      let finalSqlQuery = response.sql_query.trim().replace(/;$/, '');
-
-      // Check if query is using DISTINCT with an ORDER BY or aggregate function
-      const hasDistinct = finalSqlQuery.toUpperCase().includes("SELECT DISTINCT");
-      const hasOrderBy = finalSqlQuery.toUpperCase().includes("ORDER BY");
-      const hasAggregate = /SUM\(|AVG\(|MAX\(|MIN\(|COUNT\(/.test(finalSqlQuery.toUpperCase());
-      
-      // If it has DISTINCT and either ORDER BY or aggregates, verify if using CTE/subquery approach
-      if (hasDistinct && (hasOrderBy || hasAggregate)) {
-        const hasCTE = finalSqlQuery.toUpperCase().includes("WITH ");
-        const hasSubquery = finalSqlQuery.toUpperCase().includes(") AS ");
-        
-        // If not using CTE or subquery, transform the query to use CTE
-        if (!hasCTE && !hasSubquery) {
-          logger.info('Transforming query to use CTE for DISTINCT with ORDER BY/aggregates');
-          
-          // Extract ORDER BY clause
-          const orderByMatch = finalSqlQuery.match(/ORDER BY\s+(.+?)(?:LIMIT|$)/i);
-          const orderByClause = orderByMatch ? orderByMatch[1].trim() : '';
-          
-          // Remove ORDER BY from original query
-          finalSqlQuery = finalSqlQuery.replace(/ORDER BY\s+(.+?)(?:LIMIT|$)/i, '');
-          
-          // Extract LIMIT clause if present
-          const limitMatch = finalSqlQuery.match(/LIMIT\s+(\d+)/i);
-          const limitClause = limitMatch ? `LIMIT ${limitMatch[1]}` : '';
-          
-          // Remove LIMIT from original query if present
-          finalSqlQuery = finalSqlQuery.replace(/LIMIT\s+\d+/i, '');
-          
-          // Transform into CTE approach
-          if (orderByClause) {
-            finalSqlQuery = `WITH customer_data AS (
-              ${finalSqlQuery}
-            )
-            SELECT * FROM customer_data
-            ORDER BY ${orderByClause} ${limitClause}`;
-          }
-        }
-      }
-
-      // Replace [business_id] placeholder with actual business_id
-      if (!user || !user.business_id) {
-        logger.error('Business ID missing from user object', { user });
-        throw new Error('Business ID is required for query execution');
-      }
-      
-      finalSqlQuery = finalSqlQuery.replace(/\[business_id\]/g, user.business_id);
-
-      // Add business_id filter if not present
-      if (!finalSqlQuery.toLowerCase().includes('where')) {
-        finalSqlQuery += ' WHERE c.business_id = ' + user.business_id;
-      } else if (!finalSqlQuery.toLowerCase().includes('business_id')) {
-        finalSqlQuery = finalSqlQuery.replace(/where/i, 'WHERE c.business_id = ' + user.business_id + ' AND ');
-      }
-
-      logger.info('Executing generated SQL query', { sqlQuery: finalSqlQuery });
-
-      // Execute the query
-      const { data: result, error } = await supabase.rpc('execute_dynamic_query', {
-        query_text: finalSqlQuery
-      });
-
-      if (error) {
-        logger.error('SQL Query Error:', { error, sqlQuery: finalSqlQuery });
-        throw new Error('Failed to execute SQL query: ' + error.message);
-      }
-
+      // Return the filter criteria and explanation only
       return {
         isRejected: false,
-        sqlQuery: finalSqlQuery,
-        explanation: response.explanation,
-        filter_criteria: enhancedFilterCriteria
+        filter_criteria: enhancedFilterCriteria,
+        explanation: response.explanation
       };
     } catch (error) {
       logger.error('Error parsing AI response:', { 
@@ -654,8 +375,8 @@ Natural language query: ${nlpQuery}`;
       };
     }
   } catch (error) {
-    logger.error('Error generating SQL from NLP:', { error });
-    throw new Error('Failed to generate SQL query from natural language');
+    logger.error('Error generating filter criteria from NLP:', { error });
+    throw new Error('Failed to generate filter criteria from natural language');
   }
 };
 
@@ -675,8 +396,8 @@ const previewSegmentation = async (req, res) => {
       });
     }
 
-    // Generate SQL query from NLP
-    const result = await generateSQLFromNLP(nlpQuery, user);
+    // Generate filter criteria from NLP
+    const result = await generateFilterCriteriaFromNLP(nlpQuery, user);
 
     // If the query was rejected, return the rejection message
     if (result.isRejected) {
@@ -690,65 +411,14 @@ const previewSegmentation = async (req, res) => {
     // Transform filter criteria to storage format
     const storageFilterCriteria = transformFilterCriteriaForStorage(result.filter_criteria);
 
-    // Execute the query to get matching customers
-    const { data: queryResult, error: queryError } = await supabase.rpc('execute_dynamic_query', {
-      query_text: result.sqlQuery
-    });
-
-    if (queryError) {
-      logger.error('Query execution error:', { error: queryError, sqlQuery: result.sqlQuery });
-      throw queryError;
-    }
-
-    // Safely extract customers from the JSON array result
-    let customers = [];
-    
-    if (queryResult && Array.isArray(queryResult) && queryResult.length > 0) {
-      // If queryResult[0] is an array, use it directly
-      if (Array.isArray(queryResult[0])) {
-        customers = queryResult[0] || [];
-      } else {
-        // If queryResult is just an array of objects directly, use that
-        customers = queryResult;
-      }
-    }
-    
-    // Ensure customers is an array before mapping
-    if (!Array.isArray(customers)) {
-      logger.warn('Expected customers array but got:', { 
-        type: typeof customers, 
-        value: customers 
-      });
-      customers = [];
-    }
-
-    // Transform the results to ensure we have the expected structure
-    const transformedCustomers = customers.map(customer => ({
-      customer_id: customer.customer_id,
-      first_name: customer.first_name,
-      last_name: customer.last_name,
-      email: customer.email,
-      phone: customer.phone,
-      gender: customer.gender,
-      birth_date: customer.birth_date,
-      registration_date: customer.registration_date,
-      address: customer.address,
-      city: customer.city
-    }));
-
-    logger.info('Preview segmentation successful', { 
-      customerCount: transformedCustomers.length 
-    });
+    logger.info('Preview segmentation successful');
 
     res.json({
       success: true,
       data: {
-        customers: transformedCustomers,
-        sqlQuery: result.sqlQuery,
         explanation: result.explanation,
         filter_criteria: result.filter_criteria,
-        storage_filter_criteria: storageFilterCriteria, // Include the transformed filter criteria
-        count: transformedCustomers.length
+        storage_filter_criteria: storageFilterCriteria
       }
     });
   } catch (error) {
@@ -1038,8 +708,8 @@ const createSegmentationFromNLP = async (req, res) => {
       });
     }
 
-    // Generate SQL query from NLP
-    const nlpResult = await generateSQLFromNLP(nlpQuery, user);
+    // Generate filter criteria from NLP
+    const nlpResult = await generateFilterCriteriaFromNLP(nlpQuery, user);
 
     // If the query was rejected, return the rejection message
     if (nlpResult.isRejected) {
@@ -1073,9 +743,7 @@ const createSegmentationFromNLP = async (req, res) => {
         created_at: now,
         updated_at: now,
         status: 'active',
-          // nlp_query: nlpQuery,
-          // sql_query: nlpResult.sqlQuery,
-          filter_criteria: storageFilterCriteria,  // Add transformed filter criteria
+        filter_criteria: storageFilterCriteria,
         dataset: 'customers'
       });
 
@@ -1084,59 +752,8 @@ const createSegmentationFromNLP = async (req, res) => {
       throw segmentError;
     }
 
-    // Execute the query to get matching customers
-    const { data: queryResult, error: queryError } = await supabase.rpc('execute_dynamic_query', {
-      query_text: nlpResult.sqlQuery
-    });
-
-    if (queryError) {
-      logger.error('Query execution error:', { error: queryError, sqlQuery: nlpResult.sqlQuery });
-      throw queryError;
-    }
-
-    // Safely extract customers from the JSON array result
-    let customers = [];
-    
-    if (queryResult && Array.isArray(queryResult) && queryResult.length > 0) {
-      // If queryResult[0] is an array, use it directly
-      if (Array.isArray(queryResult[0])) {
-        customers = queryResult[0] || [];
-      } else {
-        // If queryResult is just an array of objects directly, use that
-        customers = queryResult;
-      }
-    }
-    
-    // Ensure customers is an array before proceeding
-    if (!Array.isArray(customers)) {
-      logger.warn('Expected customers array but got:', { 
-        type: typeof customers, 
-        value: customers 
-      });
-      customers = [];
-    }
-
-    // Only insert if we have customers
-    if (customers.length > 0) {
-      const segmentCustomers = customers.map(customer => ({
-        customer_id: customer.customer_id,
-        segment_id: segmentId,
-        assigned_at: now
-      }));
-
-      const { error: customersError } = await supabase
-        .from('segment_customers')
-        .insert(segmentCustomers);
-
-      if (customersError) {
-        logger.error('Error inserting segment customers:', { error: customersError });
-        throw customersError;
-      }
-    }
-
     logger.info('Segmentation created successfully', { 
-      segmentId, 
-      customerCount: customers.length 
+      segmentId
     });
 
     res.json({
@@ -1144,7 +761,6 @@ const createSegmentationFromNLP = async (req, res) => {
       message: "Segmentation created successfully",
       data: {
         segment_id: segmentId,
-        customer_count: customers.length,
         filter_criteria: storageFilterCriteria  // Return the transformed filter criteria in the response
       }
     });
