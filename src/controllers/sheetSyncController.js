@@ -13,7 +13,6 @@ const oauth2Client = new OAuth2Client(
   process.env.GOOGLE_REDIRECT_URI
 );
 
-// Function to refresh Google access token
 const refreshGoogleToken = async (refreshToken) => {
   try {
     oauth2Client.setCredentials({
@@ -35,7 +34,6 @@ const refreshGoogleToken = async (refreshToken) => {
   }
 };
 
-// Function to check and refresh token if needed
 const ensureValidToken = async (tokenData) => {
   try {
     // Check if token is expired or will expire in the next 5 minutes
@@ -80,7 +78,6 @@ const ensureValidToken = async (tokenData) => {
   }
 };
 
-// Get available segments for a business
 const getAvailableSegments = async (req, res) => {
   const user = req.user;
 
@@ -138,7 +135,6 @@ const getAvailableSegments = async (req, res) => {
   }
 };
 
-// Sync segment to Google Sheets
 const syncSegmentToSheet = async (req, res) => {
   const user = req.user;
   const { segment_id, segment_name, sheet_url, new_file_name, create_new } = req.body;
@@ -247,6 +243,31 @@ const syncSegmentToSheet = async (req, res) => {
       });
 
       targetSheetId = file.data.id;
+
+      // Get the default sheet's ID
+      const spreadsheet = await sheets.spreadsheets.get({
+        spreadsheetId: targetSheetId,
+        fields: 'sheets.properties'
+      });
+
+      const defaultSheet = spreadsheet.data.sheets[0];
+      const defaultSheetId = defaultSheet.properties.sheetId;
+
+      // Rename the default sheet
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: targetSheetId,
+        requestBody: {
+          requests: [{
+            updateSheetProperties: {
+              properties: {
+                sheetId: defaultSheetId,
+                title: segment_name
+              },
+              fields: 'title'
+            }
+          }]
+        }
+      });
     } else {
       // Extract Sheet ID from URL
       const sheetIdMatch = sheet_url.match(/\/d\/([a-zA-Z0-9-_]+)/);
@@ -259,42 +280,44 @@ const syncSegmentToSheet = async (req, res) => {
     // Use segment name as sheet name
     const sheetName = segment_name;
 
-    // Check if sheet exists in the file
-    const spreadsheet = await sheets.spreadsheets.get({
-      spreadsheetId: targetSheetId,
-      fields: 'sheets.properties'
-    });
+    // Check if sheet exists in the file (only for existing files)
+    if (!shouldCreateNew) {
+      const spreadsheet = await sheets.spreadsheets.get({
+        spreadsheetId: targetSheetId,
+        fields: 'sheets.properties'
+      });
 
-    const existingSheets = spreadsheet.data.sheets.map(sheet => sheet.properties.title);
-    
-    if (existingSheets.includes(sheetName)) {
-      // If sheet exists, delete it first
-      const sheetId = spreadsheet.data.sheets.find(s => s.properties.title === sheetName).properties.sheetId;
+      const existingSheets = spreadsheet.data.sheets.map(sheet => sheet.properties.title);
+      
+      if (existingSheets.includes(sheetName)) {
+        // If sheet exists, delete it first
+        const sheetId = spreadsheet.data.sheets.find(s => s.properties.title === sheetName).properties.sheetId;
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId: targetSheetId,
+          requestBody: {
+            requests: [{
+              deleteSheet: {
+                sheetId: sheetId
+              }
+            }]
+          }
+        });
+      }
+
+      // Create new sheet with segment name
       await sheets.spreadsheets.batchUpdate({
         spreadsheetId: targetSheetId,
         requestBody: {
           requests: [{
-            deleteSheet: {
-              sheetId: sheetId
+            addSheet: {
+              properties: {
+                title: sheetName
+              }
             }
           }]
         }
       });
     }
-
-    // Create new sheet with segment name
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: targetSheetId,
-      requestBody: {
-        requests: [{
-          addSheet: {
-            properties: {
-              title: sheetName
-            }
-          }
-        }]
-      }
-    });
 
     // Prepare data for Google Sheets
     const values = [
@@ -419,7 +442,6 @@ const syncSegmentToSheet = async (req, res) => {
   }
 };
 
-// Get sync history
 const getSyncHistory = async (req, res) => {
   const user = req.user;
 
@@ -472,7 +494,6 @@ const getSyncHistory = async (req, res) => {
   }
 };
 
-// Test token refresh
 const testTokenRefresh = async (req, res) => {
   const user = req.user;
 
