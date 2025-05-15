@@ -835,7 +835,7 @@ const generateFilterCriteriaFromNLP = async (nlpQuery, user) => {
       filter_criteria: {
         conditions: [],
         conditionGroups: [],
-        rootOperator: "AND"
+        rootOperator: responseData?.filter_criteria?.rootOperator || "AND"
       },
       explanation: {
         query_intent: "No explanation provided",
@@ -851,7 +851,8 @@ const generateFilterCriteriaFromNLP = async (nlpQuery, user) => {
     if (!responseData.filter_criteria.conditionGroups) {
       responseData.filter_criteria.conditionGroups = [];
     }
-    if (!responseData.filter_criteria.rootOperator) {
+    if (!responseData.filter_criteria.rootOperator || 
+        !["AND", "OR"].includes(responseData.filter_criteria.rootOperator)) {
       responseData.filter_criteria.rootOperator = "AND";
     }
 
