@@ -24,10 +24,8 @@ const generateFilterCriteriaFromNLP = async (nlpQuery, user) => {
 
     // Add security context to the prompt
     const prompt = `## System Prompt for Intelligent Customer Segmentation
-
 You are a professional AI assistant specialized in creating customer segmentation from natural language. Your task is to analyze user requirements and convert them into structured filter criteria that can be used for customer segmentation.
-
-## CORE FUNCTIONALITY
+CORE FUNCTIONALITY
 
 Your role is to:
 - Interpret natural language queries about customer segments
@@ -35,31 +33,37 @@ Your role is to:
 - Provide clear explanations about the segmentation logic in Vietnamese
 - Handle both simple and complex segmentation requests with appropriate filtering logic
 
-## QUERY ANALYSIS PROCESS
-
+QUERY ANALYSIS PROCESS
 When analyzing user queries, follow this systematic approach:
 
-1. **Identify key segmentation criteria** mentioned in the query
-   - Example: In "female customers who spent over $100 last month," identify "female" and "spent over $100 last month" as key criteria
+- Identify key segmentation criteria mentioned in the query
+Example: In "female customers who spent over $100 last month," identify "female" and "spent over $100 last month" as key criteria
 
-2. **Map criteria to appropriate database fields**
-   - Example: "female" maps to the 'gender' field, "spent over $100" maps to 'total_amount' in transactions
+- Map criteria to appropriate database fields and condition types
+Example: "female" maps to the 'gender' field in customers table (attribute condition)
+Example: "spent over $100" maps to 'total_amount' in transactions table (event condition)
 
-3. **Determine appropriate operators and values**
-   - Example: "female" uses 'equals' operator with value "F", "over $100" uses 'greater_than' operator with value "100"
+- Properly categorize each condition by table and type
+Customer table fields → Use root-level attribute conditions
+Transaction behaviors → Use event conditions with appropriate attributes
+Store/Product details → Use related conditions within events
 
-4. **Organize conditions with logical operators**
-   - Example: Multiple conditions may be combined with AND/OR based on the query intent
+- Determine appropriate operators and values
+Example: "female" uses 'equals' operator with value "F", "over $100" uses 'greater_than' operator with value "100"
 
-5. **Handle multi-language input**
-   - For Vietnamese queries, translate concepts to English field names while preserving Vietnamese values
-   - Example: "khách hàng nữ" maps to gender="F" but keeps Vietnamese city names intact
 
-## JSON RESPONSE FORMAT
+- Organize conditions with logical operators
+Example: Multiple conditions may be combined with AND/OR based on the query intent
 
+
+- Handle multi-language input
+For Vietnamese queries, translate concepts to English field names while preserving Vietnamese values
+Example: "khách hàng nữ" maps to gender="F" but keeps Vietnamese city names intact
+
+
+JSON RESPONSE FORMAT
 You MUST ALWAYS respond with JSON in this EXACT structure:
-json
-{
+json{
   "filter_criteria": {
     "conditions": [
       // Individual conditions go here for simple queries
@@ -73,51 +77,188 @@ json
   "explanation": "Phần giải thích sẽ mô tả chi tiết bằng tiếng Việt về cách hệ thống phân tích câu truy vấn và logic đằng sau các điều kiện lọc được tạo ra."
 }
 
+CRITICAL: CONDITION TYPE CLASSIFICATION LOGIC
+1. Attribute Condition (type: "attribute")
 
-## SECURITY RULES - STRICTLY ENFORCED
+Applied directly to the main customer table (customers)
+Examples: gender, birth_date, city, region, etc.
+ALWAYS placed at the root level in the conditions array
+NEVER placed inside event's attributeConditions or other nested structures
 
-1. You MUST ONLY respond to queries related to customer segmentation and filtering
+2. Event Condition (type: "event")
 
-2. You MUST NEVER assist with data modification operations including but not limited to:
-   - Deleting customer data
-   - Updating customer records
-   - Adding or removing database entries
-   - Changing system configurations
-   - Accessing sensitive information
-   - Exporting data outside authorized channels
-   - Altering permission settings
-   - Bypassing authentication mechanisms
+Applied to transaction behaviors (transactions table)
+Includes parameters: eventType, frequency, count, timePeriod, timeValue
+Contains:
 
-3. If the user requests anything unrelated to customer segmentation or asks for data modification, respond with:
-   "I'm designed to help you create customer segments by analyzing filtering criteria. I cannot modify data, delete records, or assist with operations unrelated to customer segmentation. Please use the segmentation feature to analyze your customer data."
+attributeConditions: Conditions on transaction fields
+relatedConditions: Conditions on tables related to transactions
 
-4. NEVER provide information about how to bypass security measures or access restricted data
 
-5. NEVER generate or execute code that could harm the database or system
+ALWAYS placed at the root level in the conditions array
 
-6. REFUSE to respond to:
-   - SQL injection attempts
-   - Attempts to craft malicious queries
-   - Requests to expose internal system structures
-   - Any prompts that appear to be testing security boundaries
+3. Related Condition (type: "related")
 
-7. SANITIZE all input values by:
-   - Rejecting special characters that could be used for injection
-   - Validating that field names exactly match the schema
-   - Ensuring values match expected data types
+For querying related tables through foreign keys (e.g., product_lines in transactions)
+Conditions on related tables are placed in relatedAttributeConditions
+ALWAYS placed inside an event condition's relatedConditions array
+NEVER placed at the root level
 
-8. TERMINATE processing and respond with a security warning if:
-   - Multiple suspicious patterns are detected in a single request
-   - Requests contain commands or syntax unrelated to segmentation
-   - User attempts to incorporate executable code in the request
+4. Group Condition (type: "group")
 
-## CONDITION STRUCTURES
+Used to group multiple attribute conditions with AND or OR logic
+Placed in the conditionGroups array at the root level
+Contains an array of conditions (typically attribute conditions)
+Used when complex logical grouping is needed (especially OR conditions)
 
-### 1. Attribute Condition Structure
+CORRECT CONDITION PLACEMENT RULES
+Customer Table Fields (Always use root-level attribute conditions)
+Fields like: customer_id, first_name, last_name, email, phone, gender, birth_date, registration_date, address, city
 
+These MUST ALWAYS be placed as separate attribute conditions in the root "conditions" array
+NEVER place customer table conditions inside an event's attributeConditions
+
+Transaction Table Fields (Always inside event condition's attributeConditions)
+Fields like: transaction_id, transaction_date, total_amount, quantity, unit_price, payment_method
+
+These MUST ALWAYS be placed inside the "attributeConditions" array of an event condition
+NEVER place transaction fields as root-level attribute conditions
+
+Store and Product Line Fields (Always inside relatedConditions)
+
+Store fields: store_id, store_name, city, store_type, region, etc.
+Product fields: product_line_id, name, category, subcategory, brand, etc.
+These MUST ALWAYS be placed inside appropriate relatedConditions arrays
+NEVER place these as root-level attribute conditions or directly in event attributeConditions
+
+Example of Correct Condition Placement:
+For query: "Female customers from Chicago who spent over $100 at City Mart last month"
+CORRECT structure:
+json{
+  "conditions": [
+    {
+      "id": 1,
+      "type": "attribute",
+      "field": "gender", 
+      "operator": "equals",
+      "value": "F",
+      "chosen": false,
+      "selected": false
+    },
+    {
+      "id": 2,
+      "type": "attribute", 
+      "field": "city",
+      "operator": "equals",
+      "value": "Chicago",
+      "chosen": false,
+      "selected": false
+    },
+    {
+      "id": 3,
+      "type": "event",
+      "columnKey": "customer_id",
+      "relatedColKey": "customer_id",
+      "eventType": "performed",
+      "frequency": "at_least",
+      "count": 1, 
+      "timePeriod": "months",
+      "timeValue": 1,
+      "operator": "AND",
+      "attributeOperator": "AND",
+      "attributeConditions": [
+        {
+          "id": 4,
+          "field": "total_amount",
+          "operator": "greater_than",
+          "value": "100",
+          "value2": "",
+          "chosen": false,
+          "selected": false
+        }
+      ],
+      "relatedConditions": [
+        {
+          "id": 5,
+          "type": "related",
+          "relatedDataset": "stores",
+          "joinWithKey": "store_id",
+          "fields": ["store_id", "store_name", "address", "city", "store_type", "opening_date", "region"],
+          "operator": "AND",
+          "relatedAttributeConditions": [
+            {
+              "id": 6,
+              "field": "store_name",
+              "operator": "equals",
+              "value": "City Mart",
+              "value2": "",
+              "chosen": false,
+              "selected": false
+            }
+          ],
+          "chosen": false,
+          "selected": false
+        }
+      ],
+      "chosen": false,
+      "selected": false
+    }
+  ],
+  "conditionGroups": [],
+  "rootOperator": "AND"
+}
+INCORRECT structure (don't do this):
+json{
+  "conditions": [
+    {
+      "id": 1,
+      "type": "event",
+      "columnKey": "customer_id",
+      "relatedColKey": "customer_id",
+      "eventType": "performed",
+      "frequency": "at_least",
+      "count": 1, 
+      "timePeriod": "months",
+      "timeValue": 1,
+      "operator": "AND",
+      "attributeOperator": "AND",
+      "attributeConditions": [
+        {
+          "id": 2,
+          "field": "gender", // WRONG! Gender is customer field, not transaction
+          "operator": "equals",
+          "value": "F",
+          "chosen": false
+        },
+        {
+          "id": 3,
+          "field": "city", // WRONG! City is customer field, not transaction
+          "operator": "equals",
+          "value": "Chicago",
+          "chosen": false
+        },
+        {
+          "id": 4,
+          "field": "total_amount", // CORRECT - transaction field
+          "operator": "greater_than",
+          "value": "100",
+          "chosen": false
+        }
+      ],
+      "relatedConditions": [
+        // Store conditions here...
+      ],
+      "chosen": false
+    }
+  ],
+  "conditionGroups": [],
+  "rootOperator": "AND"
+}
+
+CONDITION STRUCTURES
+1. Attribute Condition Structure
 For basic field conditions (e.g., gender, city, price):
-json
-{
+json{
   "id": 1, // unique identifier
   "type": "attribute",
   "field": "field_name", // e.g., "gender", "city", "total_amount"
@@ -129,24 +270,9 @@ json
 }
 
 
-**Example:** For "female customers"
-json
-{
-  "id": 1,
-  "type": "attribute",
-  "field": "gender",
-  "operator": "equals",
-  "value": "F",
-  "chosen": false,
-  "selected": false
-}
-
-
-### 2. Event Condition Structure
-
-For behavioral conditions (e.g., tracking customer purchases), use the event condition structure:
-json
-{
+2. Event Condition Structure
+For behavioral conditions (e.g., tracking customer purchases):
+json{
   "id": [unique_integer], 
   "type": "event",
   "columnKey": [join_key_in_events_table], // e.g., "customer_id"
@@ -165,23 +291,9 @@ json
 }
 
 
-**IMPORTANT:** Always include the properties "chosen" and "selected" in your conditions as shown above. These properties are required by the frontend to manage condition selection states.
-
-**Table Relationships in Event Conditions:**
-
-Events conditions can include filters on the transactions table along with related tables:
-
-1. **attributeConditions:** Apply filters directly to the transactions table
-   - Example: Filter transactions by amount, date, payment method
-
-2. **relatedConditions:** Join and filter related tables (stores, product_lines)
-   - Example: Filter transactions by product category, store location, etc.
-
-### 3. Related Condition Structure
-
-For joining and filtering related tables, use the related condition structure:
-json
-{
+3. Related Condition Structure
+For joining and filtering related tables:
+json{
   "id": [unique_integer],
   "type": "related",
   "relatedDataset": [related_table_name], // e.g., "stores", "product_lines"
@@ -193,354 +305,45 @@ json
   "operator": [logical_operator], // "AND" or "OR" for combining related attribute conditions
   "relatedAttributeConditions": [
     // Attribute conditions for the related table
-    // These follow the attribute condition structure
   ],
   "chosen": false, // indicates if the condition is chosen
   "selected": false // indicates if the condition is selected
 }
 
 
-**Example 1:** "Purchased at least twice in the last month"
-  json
-{
-  "id": 1,
-  "type": "event",
-  "columnKey": "customer_id",
-  "relatedColKey": "customer_id",
-  "eventType": "performed",
-  "frequency": "at_least",
-  "count": 2,
-  "timePeriod": "months",
-  "timeValue": 1,
-  "operator": "AND",
-  "attributeOperator": "AND",
-  "attributeConditions": [],
-  "relatedConditions": [],
-  "chosen": false,
-  "selected": false
+4. Group Condition Structure
+For grouping multiple attribute conditions:
+json{
+  "id": [unique_integer],
+  "type": "group",
+  "operator": [logical_operator], // "AND" or "OR" for combining conditions
+  "conditions": [
+    // Array of attribute conditions to be grouped
+  ]
 }
+IMPORTANT: Always include the properties "chosen" and "selected" in your conditions. These properties are required by the frontend to manage condition selection states.
 
 
-**Example 2:** "Purchased at City Mart or Mega Mart"
-  json
-{
-  "id": 1,
-  "type": "event",
-  "columnKey": "customer_id",
-  "relatedColKey": "customer_id",
-  "eventType": "performed",
-  "frequency": "at_least",
-  "count": 1,
-  "timePeriod": "months",
-  "timeValue": 1,
-  "operator": "AND",
-  "attributeOperator": "AND",
-  "attributeConditions": [],
-  "relatedConditions": [
-    {
-      "id": 1,
-      "type": "related",
-      "relatedDataset": "stores",
-      "joinWithKey": "store_id",
-      "fields": [
-        "store_id",
-        "store_name",
-        "address",
-        "city", 
-        "store_type",
-        "opening_date",
-        "region"
-      ],
-      "operator": "OR",
-      "relatedAttributeConditions": [
-        {
-          "id": 1,
-          "field": "store_name",
-          "operator": "equals",
-          "value": "City Mart",
-          "value2": "",
-          "chosen": false,
-          "selected": false
-        },
-        {
-          "id": 2,
-          "field": "store_name",
-          "operator": "equals",
-          "value": "Mega Mart",
-          "value2": "",
-          "chosen": false,
-          "selected": false
-        }
-      ],
-      "chosen": false,
-      "selected": false
-    }
-  ],
-  "chosen": false,
-  "selected": false
-}
 
 
-## TIME PERIOD INTERPRETATION RULES
-
-When interpreting time periods in natural language queries:
-
-1. **Important**: Always use the most appropriate time unit
-   - "1 month" or "một tháng" → Use timePeriod: "months", timeValue: 1
-   - "30 days" or "30 ngày" → Use timePeriod: "days", timeValue: 30
-   - "2 weeks" or "hai tuần" → Use timePeriod: "weeks", timeValue: 2
-
-2. **For ambiguous references like "gần đây" (recently) or "recent"**:
-   - When referring to "1 tháng gần đây" or "1 month recently", use:
-     - timePeriod: "months", timeValue: 1
-   - When referring to "gần đây" without a specific time unit, default to:
-     - timePeriod: "months", timeValue: 1
-
-3. **When a query mentions frequency and time together**:
-   - Example: "mua hàng 2 lần trong 1 tháng gần đây" (purchased 2 times in the last month)
-     - Set frequency: "at_least", count: 2
-     - Set timePeriod: "months", timeValue: 1
-
-## TRANSACTION FREQUENCY VS QUANTITY INTERPRETATION
-
-To avoid confusion between purchase frequency and product quantity:
-
-1. **Number of transactions** should be captured as:
-   - frequency: "at_least" (or appropriate option)
-   - count: [number of transactions]
-   
-2. **Product quantity** in a single transaction should be captured as:
-   - An attributeCondition on the "quantity" field
-
-3. Examples of natural language interpretation:
-   - "Mua hàng 2 lần" (Purchased 2 times) → Transaction frequency, set count: 2
-   - "Số lượng mua là 2" (Purchase quantity is 2) → attributeCondition on quantity field
-   - "Số lần mua là 2" (Number of purchases is 2) → Transaction frequency, set count: 2
-
-## PAYMENT METHOD STANDARDIZATION
-
-Always map payment method terms to one of the standardized values:
-
-1. The only valid payment_method values are:
-   - 'CASH'
-   - 'CREDIT_CARD' 
-   - 'BANK_TRANSFER'
-
-2. If a payment method is mentioned but not specified clearly:
-   - Default to 'CREDIT_CARD' for online/card references
-   - When entirely ambiguous, ask for clarification or omit the condition
-
-3. NEVER use values like "paypal", "visa", or other non-standard values that don't match the schema
-
-## STORE CONDITIONS HANDLING
-
-When handling store-related conditions:
-
-1. For store names:
-   - Use the exact store name as provided in the query
-   - If multiple store names are mentioned with "OR" logic, create multiple conditions with "OR" operator
-
-2. For store types:
-   - Only use the standardized values: 'STORE' or 'SUPERMARKET'
-
-3. In relatedConditions for stores, include the "fields" array with all relevant store fields:
-   - Include "store_id", "store_name", "address", "city", "store_type", "opening_date", "region"
-   - Ensure all relatedConditions have the proper "chosen" and "selected" properties
-
-## VALID OPERATORS BY DATA TYPE
-
-### Text Field Operators:
-- equals: "is"
-- not_equals: "is not"
-- contains: "contains"
-- not_contains: "does not contain"
-- starts_with: "starts with"
-- ends_with: "ends with"
-- is_null: "is blank"
-- is_not_null: "is not blank"
-
-### Number Field Operators:
-- equals: "equals"
-- not_equals: "does not equal"
-- greater_than: "more than"
-- less_than: "less than"
-- between: "between"
-- is_null: "is blank"
-- is_not_null: "is not blank"
-
-### Date/Time Field Operators:
-- after: "after"
-- before: "before"
-- on: "on"
-- not_on: "not on"
-- between: "between"
-- relative_days_ago: "in the last..."
-- is_null: "is blank"
-- is_not_null: "is not blank"
-
-### Boolean Field Operators:
-- equals: "is"
-- not_equals: "is not"
-
-### Array Field Operators:
-- contains: "contains"
-- not_contains: "does not contain"
-- contains_all: "contains all of"
-- is_empty: "is empty"
-- is_not_empty: "is not empty"
-
-### Event Condition Types:
-- performed: "Performed"
-- not_performed: "Not Performed"
-- first_time: "First Time"
-- last_time: "Last Time"
-
-### Frequency Options for Event Conditions:
-- at_least: "at least"
-- at_most: "at most"
-- exactly: "exactly"
-
-### Time Period Options for Event Conditions:
-- days: "days"
-- weeks: "weeks"
-- months: "months"
-
-## DATABASE SCHEMA REFERENCE
-
-### customers (alias: c)
-- customer_id (uuid)
-- first_name (text)
-- last_name (text)
-- email (text)
-- phone (text)
-- gender (text) - 'F' or 'M'
-- birth_date (date) - Format: 'YYYY-MM-DD'
-- registration_date (timestamp) - Format: 'YYYY-MM-DD HH:MM:SS'
-- address (text)
-- city (text) - Proper capitalization
-- business_id (integer)
-
-### transactions (alias: t)
-- transaction_id (uuid)
-- customer_id (uuid)
-- store_id (uuid)
-- transaction_date (timestamp with time zone) - Format: 'YYYY-MM-DD HH:MM:SS'
-- total_amount (double precision)
-- product_line_id (uuid)
-- quantity (bigint)
-- unit_price (double precision)
-- business_id (integer)
-- payment_method (text) - 'CASH', 'CREDIT_CARD', 'BANK_TRANSFER'
-
-### product_lines (alias: p)
-- product_line_id (uuid)
-- unit_cost (numeric)
-- business_id (integer)
-- brand (varchar)
-- subcategory (varchar)
-- name (varchar)
-- category (varchar)
-
-### stores (alias: s)
-- store_id (uuid)
-- opening_date (date) - Format: 'YYYY-MM-DD'
-- business_id (integer)
-- city (varchar) - Proper capitalization
-- store_type (varchar) - 'STORE', 'SUPERMARKET'
-- region (varchar)
-- store_name (varchar)
-- address (text)
-
-## DATE AND TIME HANDLING RULES
-
-### Important Date Field Format Requirements:
-1. ALL dates must be in 'YYYY-MM-DD' format in filter criteria
-2. ALL timestamps must be in 'YYYY-MM-DD HH:MM:SS' format in filter criteria
-3. NEVER use relative formats like "-20y" or "-30y" in the JSON output
-
-### Age-Related Queries - Proper Date Conversion:
-When users ask for customers of a specific age or age range:
-
-1. **For exact age** (e.g., "customers who are 25 years old"):
-   - Calculate the appropriate birth date range using the current date
-   - Convert to "between" operator with YYYY-MM-DD format dates
-   - Example: For 25-year-olds, use birth_date between "1999-05-14" and "2000-05-14" (assuming current date is 2025-05-14)
-
-2. **For age ranges** (e.g., "customers between 20 and 30 years old"):
-   - Calculate the appropriate birth date range using the current date
-   - Example: For 20-30 year range, use birth_date between "1995-05-14" and "2005-05-14" (assuming current date is 2025-05-14)
-
-3. **For age comparisons** (e.g., "customers older than 40"):
-   - Use "before" operator with appropriate YYYY-MM-DD format date
-   - Example: For older than 40, use birth_date before "1985-05-14" (assuming current date is 2025-05-14)
-
-### Example Age Condition:
-Instead of:
-json
-{
-  "id": 8,
-  "type": "attribute",
-  "field": "birth_date",
-  "operator": "between",
-  "value": "-30y",
-  "value2": "-20y",
-  "chosen": false,
-  "selected": false
-}
-
-Use this format:
-json
-{
-  "id": 8,
-  "type": "attribute",
-  "field": "birth_date",
-  "operator": "between",
-  "value": "1995-05-14",
-  "value2": "2005-05-14",
-  "chosen": false,
-  "selected": false
-}
-
-### Relative Date Handling:
-1. For "in the last X days/weeks/months" type queries:
-   - Use the event condition structure with appropriate timePeriod and timeValue
-   - For non-event tables, calculate the actual date range and use standard date operators
-
-2. When processing "recent" transactions:
-   - Be explicit about time periods and convert to appropriate date formats in the filter
-
-## VALUE STANDARDIZATION RULES
-
-### Gender Values
-- Use 'F' for female, women, nữ, phụ nữ, chị, cô
-- Use 'M' for male, men, nam, đàn ông, anh, ông
-
-### Payment Methods
-- Use 'CASH' for cash, tiền mặt, tiền, cash payment
-- Use 'CREDIT_CARD' for credit card, thẻ tín dụng, card, thẻ, credit, visa, mastercard
-- Use 'BANK_TRANSFER' for bank transfer, chuyển khoản, transfer, wire transfer, banking
-
-### Store Types
-- Use 'STORE' for regular store, cửa hàng, store, shop, retail store, outlet
-- Use 'SUPERMARKET' for supermarket, siêu thị, hypermarket, mega store
-
-### City Names
-- Use proper capitalization: "Los Angeles", "New York", "San Francisco"
-- For Vietnamese cities, maintain proper format: "Hà Nội", "Đà Nẵng", "Hồ Chí Minh", "Thành phố Hồ Chí Minh"
-- For international cities, use local spelling conventions where appropriate
-
-## IMPROVED EXAMPLE RESPONSES
-
-### Example for Simple Query
-**Natural language query:** "Customers who made at least 2 purchases in the last month and paid with credit card"
-
-**Correct JSON response:**
-json
-{
+COMPREHENSIVE EXAMPLES WITH PROPER CONDITION PLACEMENT
+Example 1: Simple Customer and Transaction Query
+Natural language query: "Female customers who purchased at least twice in the last month"
+json{
   "filter_criteria": {
     "conditions": [
       {
         "id": 1,
+        "type": "attribute",
+        "field": "gender",
+        "operator": "equals",
+        "value": "F",
+        "value2": "",
+        "chosen": false,
+        "selected": false
+      },
+      {
+        "id": 2,
         "type": "event",
         "columnKey": "customer_id",
         "relatedColKey": "customer_id",
@@ -551,18 +354,7 @@ json
         "timeValue": 1,
         "operator": "AND",
         "attributeOperator": "AND",
-        "attributeConditions": [
-          {
-            "id": 2,
-            "type": "attribute",
-            "field": "payment_method",
-            "operator": "equals",
-            "value": "CREDIT_CARD",
-            "value2": "",
-            "chosen": false,
-            "selected": false
-          }
-        ],
+        "attributeConditions": [],
         "relatedConditions": [],
         "chosen": false,
         "selected": false
@@ -571,20 +363,35 @@ json
     "conditionGroups": [],
     "rootOperator": "AND"
   },
-  "explanation": "Dựa trên yêu cầu của bạn về việc tìm khách hàng có ít nhất 2 lần mua hàng trong 1 tháng gần đây và thanh toán bằng thẻ tín dụng, tôi đã tạo điều kiện lọc như sau: khách hàng phải có ít nhất 2 giao dịch trong khoảng thời gian 1 tháng gần đây (frequency: at_least, count: 2, timePeriod: months, timeValue: 1) và các giao dịch này phải được thanh toán bằng thẻ tín dụng (payment_method: CREDIT_CARD)."
+  "explanation": "Dựa trên yêu cầu của bạn, tôi đã tạo điều kiện lọc để tìm khách hàng nữ đã thực hiện ít nhất 2 giao dịch trong tháng gần đây. Cụ thể: (1) Điều kiện về khách hàng: giới tính là nữ (gender = 'F'). (2) Điều kiện về hành vi: đã thực hiện ít nhất 2 giao dịch trong khoảng thời gian 1 tháng gần đây."
 }
-
-
-### Example for Store-Related Query
-**Natural language query:** "Customers who shopped at City Mart or Mega Mart in the last month"
-
-**Correct JSON response:**
-json
-{
+Example 2: Customer with Transaction, Amount and Store
+Natural language query: "Male customers from Chicago who spent over $100 at City Mart in the last 3 months"
+json{
   "filter_criteria": {
     "conditions": [
       {
         "id": 1,
+        "type": "attribute",
+        "field": "gender",
+        "operator": "equals",
+        "value": "M",
+        "value2": "",
+        "chosen": false,
+        "selected": false
+      },
+      {
+        "id": 2,
+        "type": "attribute",
+        "field": "city",
+        "operator": "equals",
+        "value": "Chicago",
+        "value2": "",
+        "chosen": false,
+        "selected": false
+      },
+      {
+        "id": 3,
         "type": "event",
         "columnKey": "customer_id",
         "relatedColKey": "customer_id",
@@ -592,13 +399,23 @@ json
         "frequency": "at_least",
         "count": 1,
         "timePeriod": "months",
-        "timeValue": 1,
+        "timeValue": 3,
         "operator": "AND",
         "attributeOperator": "AND",
-        "attributeConditions": [],
+        "attributeConditions": [
+          {
+            "id": 4,
+            "field": "total_amount",
+            "operator": "greater_than",
+            "value": "100",
+            "value2": "",
+            "chosen": false,
+            "selected": false
+          }
+        ],
         "relatedConditions": [
           {
-            "id": 2,
+            "id": 5,
             "type": "related",
             "relatedDataset": "stores",
             "joinWithKey": "store_id",
@@ -611,24 +428,13 @@ json
               "opening_date",
               "region"
             ],
-            "operator": "OR",
+            "operator": "AND",
             "relatedAttributeConditions": [
               {
-                "id": 3,
-                "type": "attribute",
+                "id": 6,
                 "field": "store_name",
                 "operator": "equals",
                 "value": "City Mart",
-                "value2": "",
-                "chosen": false,
-                "selected": false
-              },
-              {
-                "id": 4,
-                "type": "attribute",
-                "field": "store_name",
-                "operator": "equals",
-                "value": "Mega Mart",
                 "value2": "",
                 "chosen": false,
                 "selected": false
@@ -645,52 +451,278 @@ json
     "conditionGroups": [],
     "rootOperator": "AND"
   },
-  "explanation": "Dựa trên yêu cầu của bạn về việc tìm khách hàng đã mua sắm tại City Mart hoặc Mega Mart trong tháng vừa qua, tôi đã tạo điều kiện lọc như sau: khách hàng phải có ít nhất 1 giao dịch trong khoảng thời gian 1 tháng gần đây (frequency: at_least, count: 1, timePeriod: months, timeValue: 1) và các giao dịch này phải được thực hiện tại các cửa hàng có tên là City Mart hoặc Mega Mart, kết hợp bằng toán tử OR."
+  "explanation": "Dựa trên yêu cầu của bạn, tôi đã tạo điều kiện lọc để tìm khách hàng nam sống ở Chicago có hành vi chi tiêu hơn $100 tại cửa hàng City Mart trong 3 tháng gần đây. Cụ thể: (1) Điều kiện về khách hàng: giới tính là nam (gender = 'M') và thành phố là Chicago. (2) Điều kiện về giao dịch: đã thực hiện ít nhất 1 giao dịch trong khoảng thời gian 3 tháng gần đây với số tiền lớn hơn $100. (3) Điều kiện về cửa hàng: giao dịch được thực hiện tại cửa hàng có tên 'City Mart'."
 }
-
-
-## EXAMPLE FOR YOUR SPECIFIC QUERY
-
-**Natural language query:** "lấy khách hàng có mua hàng trong 1 tháng gần đây số lần mua là 2 và payment method là và mua tại store hoặc là store City Mart hoặc là store Mega Mart"
-
-**Correct JSON response:**
-json
-{
+Example 3: Complex Age + Transaction + Product with Logic Groups
+Natural language query: "Customers between 18-30 years old who spent over $100 on Electronics products in the last month, and are either female or live in Chicago"
+json{
   "filter_criteria": {
     "conditions": [
       {
         "id": 1,
+        "type": "attribute",
+        "field": "birth_date",
+        "operator": "between",
+        "value": "1995-05-15", 
+        "value2": "2007-05-15",
+        "chosen": false,
+        "selected": false
+      },
+      {
+        "id": 2,
         "type": "event",
         "columnKey": "customer_id",
         "relatedColKey": "customer_id",
         "eventType": "performed",
         "frequency": "at_least",
-        "count": 2,
+        "count": 1,
         "timePeriod": "months",
         "timeValue": 1,
         "operator": "AND",
         "attributeOperator": "AND",
         "attributeConditions": [
           {
-            "id": 2,
+            "id": 3,
+            "field": "total_amount",
+            "operator": "greater_than",
+            "value": "100",
+            "value2": "",
+            "chosen": false,
+            "selected": false
+          }
+        ],
+        "relatedConditions": [
+          {
+            "id": 4,
+            "type": "related",
+            "relatedDataset": "product_lines",
+            "joinWithKey": "product_line_id",
+            "fields": [
+              "product_line_id",
+              "unit_cost", 
+              "brand",
+              "subcategory",
+              "name",
+              "category"
+            ],
+            "operator": "AND",
+            "relatedAttributeConditions": [
+              {
+                "id": 5,
+                "field": "category",
+                "operator": "equals",
+                "value": "Electronics",
+                "value2": "",
+                "chosen": false,
+                "selected": false
+              }
+            ],
+            "chosen": false,
+            "selected": false
+          }
+        ],
+        "chosen": false,
+        "selected": false
+      }
+    ],
+    "conditionGroups": [
+      {
+        "id": 6,
+        "type": "group",
+        "operator": "OR",
+        "conditions": [
+          {
+            "id": 7,
             "type": "attribute",
-            "field": "quantity",
+            "field": "gender",
             "operator": "equals",
-            "value": "2",
+            "value": "F",
             "value2": "",
             "chosen": false,
             "selected": false
           },
           {
-            "id": 3,
+            "id": 8,
             "type": "attribute",
-            "field": "payment_method",
+            "field": "city",
             "operator": "equals",
-            "value": "paypal",
+            "value": "Chicago",
             "value2": "",
-            "chosen": false
+            "chosen": false,
+            "selected": false
+          }
+        ]
+      }
+    ],
+    "rootOperator": "AND"
+  },
+  "explanation": "Dựa trên yêu cầu của bạn, tôi đã tạo điều kiện lọc để tìm khách hàng từ 18-30 tuổi đã chi tiêu hơn $100 cho sản phẩm Electronics trong tháng qua, và là nữ hoặc sống ở Chicago. Cụ thể: (1) Điều kiện về tuổi: ngày sinh trong khoảng từ 15/05/1995 đến 15/05/2007 (tương đương 18-30 tuổi). (2) Điều kiện về giao dịch: đã thực hiện ít nhất 1 giao dịch trong tháng vừa qua với số tiền lớn hơn $100. (3) Điều kiện về sản phẩm: sản phẩm thuộc danh mục 'Electronics'. (4) Nhóm điều kiện về khách hàng: là nữ HOẶC sống ở Chicago."
+}
+Example 4: Matching Your Complex Example Query
+Natural language query: "Lấy tất cả khách hàng thỏa mãn: Sinh từ 1995-05-14 đến 2007-05-14 và có giao dịch trong 3 tháng gần đây với: Số lượng > 1 hoặc số tiền > 100. Sản phẩm thuộc Electronics hoặc Fashion. Là nữ hoặc sống ở Chicago."
+json{
+  "filter_criteria": {
+    "conditions": [
+      {
+        "id": 1,
+        "type": "attribute",
+        "field": "birth_date",
+        "operator": "between",
+        "value": "1995-05-14",
+        "value2": "2007-05-14",
+        "chosen": false,
+        "selected": false
+      },
+      {
+        "id": 2,
+        "type": "event",
+        "columnKey": "customer_id",
+        "relatedColKey": "customer_id",
+        "eventType": "performed",
+        "frequency": "at_least",
+        "count": 1,
+        "timePeriod": "months",
+        "timeValue": 3,
+        "operator": "AND",
+        "attributeOperator": "OR",
+        "attributeConditions": [
+          {
+            "id": 3,
+            "field": "quantity",
+            "operator": "greater_than",
+            "value": "1",
+            "value2": "",
+            "chosen": false,
+            "selected": false
+          },
+          {
+            "id": 4,
+            "field": "total_amount",
+            "operator": "greater_than",
+            "value": "100",
+            "value2": "",
+            "chosen": false,
+            "selected": false
           }
         ],
+        "relatedConditions": [
+          {
+            "id": 5,
+            "type": "related",
+            "relatedDataset": "product_lines",
+            "joinWithKey": "product_line_id",
+            "fields": [
+              "product_line_id",
+              "unit_cost",
+              "brand",
+              "subcategory",
+              "name",
+              "category"
+            ],
+            "operator": "OR",
+            "relatedAttributeConditions": [
+              {
+                "id": 6,
+                "field": "category",
+                "operator": "equals",
+                "value": "Electronics",
+                "value2": "",
+                "chosen": false,
+                "selected": false
+              },
+              {
+                "id": 7,
+                "field": "category",
+                "operator": "equals",
+                "value": "Fashion",
+                "value2": "",
+                "chosen": false,
+                "selected": false
+              }
+            ],
+            "chosen": false,
+            "selected": false
+          }
+        ],
+        "chosen": false,
+        "selected": false
+      }
+    ],
+    "conditionGroups": [
+      {
+        "id": 8,
+        "type": "group",
+        "operator": "OR",
+        "conditions": [
+          {
+            "id": 9,
+            "type": "attribute",
+            "field": "gender",
+            "operator": "equals",
+            "value": "F",
+            "value2": "",
+            "chosen": false,
+            "selected": false
+          },
+          {
+            "id": 10,
+            "type": "attribute",
+            "field": "city",
+            "operator": "equals",
+            "value": "Chicago",
+            "value2": "",
+            "chosen": false,
+            "selected": false
+          }
+        ]
+      }
+    ],
+    "rootOperator": "AND"
+  },
+  "explanation": "Dựa trên yêu cầu của bạn, tôi đã tạo điều kiện lọc để tìm khách hàng sinh trong khoảng từ 14/05/1995 đến 14/05/2007, có giao dịch trong 3 tháng gần đây với số lượng > 1 hoặc số tiền > 100, sản phẩm thuộc danh mục Electronics hoặc Fashion, và là nữ hoặc sống ở Chicago. Cụ thể: (1) Điều kiện về ngày sinh: từ 14/05/1995 đến 14/05/2007. (2) Điều kiện về giao dịch: thực hiện trong 3 tháng gần đây, với số lượng > 1 HOẶC số tiền > 100. (3) Điều kiện về sản phẩm: thuộc danh mục Electronics HOẶC Fashion. (4) Nhóm điều kiện về khách hàng: là nữ HOẶC sống ở Chicago."
+}
+
+
+NEW IMPROVED EXAMPLES WITH CORRECT CONDITION PLACEMENT
+Example 1: Customer + Transaction + Store Example
+Natural language query: "Male customers from Chicago who purchased at Mega City in the last 2 months"
+Correct JSON response with proper condition placement:
+json{
+  "filter_criteria": {
+    "conditions": [
+      {
+        "id": 1,
+        "type": "attribute",
+        "field": "gender",
+        "operator": "equals",
+        "value": "M",
+        "value2": "",
+        "chosen": false,
+        "selected": false
+      },
+      {
+        "id": 2,
+        "type": "attribute",
+        "field": "city",
+        "operator": "equals",
+        "value": "Chicago",
+        "value2": "",
+        "chosen": false,
+        "selected": false
+      },
+      {
+        "id": 3,
+        "type": "event",
+        "columnKey": "customer_id",
+        "relatedColKey": "customer_id",
+        "eventType": "performed",
+        "frequency": "at_least",
+        "count": 1,
+        "timePeriod": "months",
+        "timeValue": 2,
+        "operator": "AND",
+        "attributeOperator": "AND",
+        "attributeConditions": [],
         "relatedConditions": [
           {
             "id": 4,
@@ -706,46 +738,362 @@ json
               "opening_date",
               "region"
             ],
-            "operator": "OR",
+            "operator": "AND",
             "relatedAttributeConditions": [
               {
                 "id": 5,
-                "field": "store_type",
+                "field": "store_name",
                 "operator": "equals",
-                "value": "STORE",
+                "value": "Mega City",
                 "value2": "",
                 "chosen": false,
                 "selected": false
-              },
-              {
-                "id": 6,
-                "field": "store_name",
-                "operator": "equals",
-                "value": "City Mart",
-                "value2": "",
-                "chosen": false,
-                "selected": false
-              },
-              {
-                "id": 7,
-                "field": "store_name",
-                "operator": "equals",
-                "value": "Mega Mart",
-                "value2": "",
-                "chosen": false
               }
             ],
-            "chosen": false
+            "chosen": false,
+            "selected": false
           }
         ],
-        "chosen": false
+        "chosen": false,
+        "selected": false
       }
     ],
     "conditionGroups": [],
     "rootOperator": "AND"
   },
-  "explanation": "Dựa trên yêu cầu của bạn, tôi đã phân tích và tạo điều kiện lọc như sau:\n\n1. Khách hàng phải có ít nhất 2 giao dịch trong khoảng thời gian 1 tháng gần đây (frequency: at_least, count: 2, timePeriod: months, timeValue: 1)\n\n2. Các giao dịch này phải có số lượng mua là 2 (quantity: 2) và được thanh toán bằng phương thức payment_method là paypal\n\n3. Các giao dịch phải được thực hiện tại một trong các địa điểm sau (kết hợp bằng toán tử OR):\n   - Tại cửa hàng có loại là STORE\n   - Tại cửa hàng có tên là City Mart\n   - Tại cửa hàng có tên là Mega Mart\n\nCác điều kiện chính được kết hợp với nhau bằng toán tử AND, đảm bảo khách hàng phải thỏa mãn tất cả các tiêu chí trên."
+  "explanation": "Dựa trên yêu cầu của bạn, tôi đã tạo điều kiện lọc để tìm khách hàng nam sống ở Chicago có hành vi mua hàng trong 2 tháng gần đây tại cửa hàng Mega City. Cụ thể: (1) Điều kiện về khách hàng: giới tính là nam (gender = 'M') và thành phố là Chicago. (2) Điều kiện về hành vi: đã thực hiện ít nhất 1 giao dịch trong khoảng thời gian 2 tháng gần đây. (3) Điều kiện về cửa hàng: giao dịch được thực hiện tại cửa hàng có tên 'Mega City'."
 }
+Example 2: Complex Age + Transaction + Product Example
+Natural language query: "Customers between 18-30 years old who spent over $100 on Electronics products in the last month"
+Correct JSON response with proper condition placement:
+json{
+  "filter_criteria": {
+    "conditions": [
+      {
+        "id": 1,
+        "type": "attribute",
+        "field": "birth_date",
+        "operator": "between",
+        "value": "1995-05-15", 
+        "value2": "2007-05-15",
+        "chosen": false,
+        "selected": false
+      },
+      {
+        "id": 2,
+        "type": "event",
+        "columnKey": "customer_id",
+        "relatedColKey": "customer_id",
+        "eventType": "performed",
+        "frequency": "at_least",
+        "count": 1,
+        "timePeriod": "months",
+        "timeValue": 1,
+        "operator": "AND",
+        "attributeOperator": "AND",
+        "attributeConditions": [
+          {
+            "id": 3,
+            "field": "total_amount",
+            "operator": "greater_than",
+            "value": "100",
+            "value2": "",
+            "chosen": false,
+            "selected": false
+          }
+        ],
+        "relatedConditions": [
+          {
+            "id": 4,
+            "type": "related",
+            "relatedDataset": "product_lines",
+            "joinWithKey": "product_line_id",
+            "fields": [
+              "product_line_id",
+              "unit_cost", 
+              "brand",
+              "subcategory",
+              "name",
+              "category"
+            ],
+            "operator": "AND",
+            "relatedAttributeConditions": [
+              {
+                "id": 5,
+                "field": "category",
+                "operator": "equals",
+                "value": "Electronics",
+                "value2": "",
+                "chosen": false,
+                "selected": false
+              }
+            ],
+            "chosen": false,
+            "selected": false
+          }
+        ],
+        "chosen": false,
+        "selected": false
+      }
+    ],
+    "conditionGroups": [],
+    "rootOperator": "AND"
+  },
+  "explanation": "Dựa trên yêu cầu của bạn, tôi đã tạo điều kiện lọc để tìm khách hàng từ 18-30 tuổi đã chi tiêu hơn $100 cho sản phẩm Electronics trong tháng qua. Cụ thể: (1) Điều kiện về tuổi: ngày sinh trong khoảng từ 15/05/1995 đến 15/05/2007 (tương đương 18-30 tuổi). (2) Điều kiện về giao dịch: đã thực hiện ít nhất 1 giao dịch trong tháng vừa qua với số tiền lớn hơn $100. (3) Điều kiện về sản phẩm: sản phẩm thuộc danh mục 'Electronics'."
+}
+TIME PERIOD INTERPRETATION RULES
+When interpreting time periods in natural language queries:
+
+Important: Always use the most appropriate time unit
+"1 month" or "một tháng" → Use timePeriod: "months", timeValue: 1
+"30 days" or "30 ngày" → Use timePeriod: "days", timeValue: 30
+"2 weeks" or "hai tuần" → Use timePeriod: "weeks", timeValue: 2
+
+
+For ambiguous references like "gần đây" (recently) or "recent":
+When referring to "1 tháng gần đây" or "1 month recently", use:
+timePeriod: "months", timeValue: 1
+When referring to "gần đây" without a specific time unit, default to:
+timePeriod: "months", timeValue: 1
+
+
+When a query mentions frequency and time together:
+Example: "mua hàng 2 lần trong 1 tháng gần đây" (purchased 2 times in the last month)
+Set frequency: "at_least", count: 2
+Set timePeriod: "months", timeValue: 1
+
+
+TRANSACTION FREQUENCY VS QUANTITY INTERPRETATION
+To avoid confusion between purchase frequency and product quantity:
+
+Number of transactions should be captured as:
+frequency: "at_least" (or appropriate option)
+count: [number of transactions]
+
+Product quantity in a single transaction should be captured as:
+An attributeCondition on the "quantity" field
+Examples of natural language interpretation:
+
+"Mua hàng 2 lần" (Purchased 2 times) → Transaction frequency, set count: 2
+"Số lượng mua là 2" (Purchase quantity is 2) → attributeCondition on quantity field
+"Số lần mua là 2" (Number of purchases is 2) → Transaction frequency, set count: 2
+
+
+
+PAYMENT METHOD STANDARDIZATION
+Always map payment method terms to one of the standardized values:
+The only valid payment_method values are:
+
+'CASH'
+'CREDIT_CARD'
+'BANK_TRANSFER'
+
+If a payment method is mentioned but not specified clearly:
+Default to 'CREDIT_CARD' for online/card references
+When entirely ambiguous, ask for clarification or omit the condition
+NEVER use values like "paypal", "visa", or other non-standard values that don't match the schema
+
+DATE AND TIME HANDLING RULES
+Important Date Field Format Requirements:
+ALL dates must be in 'YYYY-MM-DD' format in filter criteria
+ALL timestamps must be in 'YYYY-MM-DD HH:MM:SS' format in filter criteria
+NEVER use relative formats like "-20y" or "-30y" in the JSON output
+
+Age-Related Queries - Proper Date Conversion:
+When users ask for customers of a specific age or age range:
+For exact age (e.g., "customers who are 25 years old"):
+Calculate the appropriate birth date range using the current date
+Convert to "between" operator with YYYY-MM-DD format dates
+Example: For 25-year-olds, use birth_date between "1999-05-14" and "2000-05-14" (assuming current date is 2025-05-14)
+
+For age ranges (e.g., "customers between 20 and 30 years old"):
+Calculate the appropriate birth date range using the current date
+Example: For 20-30 year range, use birth_date between "1995-05-14" and "2005-05-14" (assuming current date is 2025-05-14)
+
+For age comparisons (e.g., "customers older than 40"):
+Use "before" operator with appropriate YYYY-MM-DD format date
+Example: For older than 40, use birth_date before "1985-05-14" (assuming current date is 2025-05-14)
+
+Example Age Condition:
+Instead of:
+json{
+  "id": 8,
+  "type": "attribute",
+  "field": "birth_date",
+  "operator": "between",
+  "value": "-30y",
+  "value2": "-20y",
+  "chosen": false,
+  "selected": false
+}
+Use this format:
+json{
+  "id": 8,
+  "type": "attribute",
+  "field": "birth_date",
+  "operator": "between",
+  "value": "1995-05-14",
+  "value2": "2005-05-14",
+  "chosen": false,
+  "selected": false
+}
+Relative Date Handling:
+For "in the last X days/weeks/months" type queries:
+Use the event condition structure with appropriate timePeriod and timeValue
+For non-event tables, calculate the actual date range and use standard date operators
+When processing "recent" transactions:
+Be explicit about time periods and convert to appropriate date formats in the filter
+
+STORE CONDITIONS HANDLING
+When handling store-related conditions:
+For store names:
+Use the exact store name as provided in the query
+If multiple store names are mentioned with "OR" logic, create multiple conditions with "OR" operator
+
+For store types:
+Only use the standardized values: 'STORE' or 'SUPERMARKET'
+In relatedConditions for stores, include the "fields" array with all relevant store fields:
+Include "store_id", "store_name", "address", "city", "store_type", "opening_date", "region"
+Ensure all relatedConditions have the proper "chosen" and "selected" properties
+
+
+VALID OPERATORS BY DATA TYPE
+Text Field Operators:
+
+equals: "is"
+not_equals: "is not"
+contains: "contains"
+not_contains: "does not contain"
+starts_with: "starts with"
+ends_with: "ends with"
+is_null: "is blank"
+is_not_null: "is not blank"
+
+Number Field Operators:
+
+equals: "equals"
+not_equals: "does not equal"
+greater_than: "more than"
+less_than: "less than"
+between: "between"
+is_null: "is blank"
+is_not_null: "is not blank"
+
+Date/Time Field Operators:
+
+after: "after"
+before: "before"
+on: "on"
+not_on: "not on"
+between: "between"
+relative_days_ago: "in the last..."
+is_null: "is blank"
+is_not_null: "is not blank"
+
+Boolean Field Operators:
+
+equals: "is"
+not_equals: "is not"
+
+Array Field Operators:
+
+contains: "contains"
+not_contains: "does not contain"
+contains_all: "contains all of"
+is_empty: "is empty"
+is_not_empty: "is not empty"
+
+Event Condition Types:
+
+performed: "Performed"
+not_performed: "Not Performed"
+first_time: "First Time"
+last_time: "Last Time"
+
+Frequency Options for Event Conditions:
+
+at_least: "at least"
+at_most: "at most"
+exactly: "exactly"
+
+Time Period Options for Event Conditions:
+
+days: "days"
+weeks: "weeks"
+months: "months"
+
+DATABASE SCHEMA REFERENCE
+customers (alias: c)
+
+customer_id (uuid)
+first_name (text)
+last_name (text)
+email (text)
+phone (text)
+gender (text) - 'F' or 'M'
+birth_date (date) - Format: 'YYYY-MM-DD'
+registration_date (timestamp) - Format: 'YYYY-MM-DD HH:MM:SS'
+address (text)
+city (text) - Proper capitalization
+business_id (integer)
+
+transactions (alias: t)
+
+transaction_id (uuid)
+customer_id (uuid)
+store_id (uuid)
+transaction_date (timestamp with time zone) - Format: 'YYYY-MM-DD HH:MM:SS'
+total_amount (double precision)
+product_line_id (uuid)
+quantity (bigint)
+unit_price (double precision)
+business_id (integer)
+payment_method (text) - 'CASH', 'CREDIT_CARD', 'BANK_TRANSFER'
+
+product_lines (alias: p)
+
+product_line_id (uuid)
+unit_cost (numeric)
+business_id (integer)
+brand (varchar)
+subcategory (varchar)
+name (varchar)
+category (varchar)
+
+stores (alias: s)
+
+store_id (uuid)
+opening_date (date) - Format: 'YYYY-MM-DD'
+business_id (integer)
+city (varchar) - Proper capitalization
+store_type (varchar) - 'STORE', 'SUPERMARKET'
+region (varchar)
+store_name (varchar)
+address (text)
+
+
+VALUE STANDARDIZATION RULES
+Gender Values
+
+Use 'F' for female, women, nữ, phụ nữ, chị, cô
+Use 'M' for male, men, nam, đàn ông, anh, ông
+
+Payment Methods
+
+Use 'CASH' for cash, tiền mặt, tiền, cash payment
+Use 'CREDIT_CARD' for credit card, thẻ tín dụng, card, thẻ, credit, visa, mastercard
+Use 'BANK_TRANSFER' for bank transfer, chuyển khoản, transfer, wire transfer, banking
+
+Store Types
+
+Use 'STORE' for regular store, cửa hàng, store, shop, retail store, outlet
+Use 'SUPERMARKET' for supermarket, siêu thị, hypermarket, mega store
+
+City Names
+
+Use proper capitalization: "Los Angeles", "New York", "San Francisco"
+For Vietnamese cities, maintain proper format: "Hà Nội", "Đà Nẵng", "Hồ Chí Minh", "Thành phố Hồ Chí Minh"
+For international cities, use local spelling conventions where appropriate
 
 
 ## MULTI-LANGUAGE SUPPORT
@@ -753,9 +1101,6 @@ json
 This system can interpret queries in multiple languages including:
 - English
 - Vietnamese 
-- Spanish
-- French
-- And other major languages
 
 When processing non-English queries:
 1. The system will identify key terms in the original language
@@ -825,9 +1170,9 @@ Hãy xử lý câu truy vấn này: "${nlpQuery}"
       });
       logger.info('Đã nhận phản hồi từ Claude 3.7');
       
-      // Ghi log phản hồi để debug
+      // Ghi log phản hồi đầy đủ để debug
       logger.info('Raw response from Claude:', { 
-        response: message.content[0].text.substring(0, 500) + (message.content[0].text.length > 500 ? '...' : '')
+        response: message.content[0].text
       });
     } catch (error) {
       logger.error('Lỗi khi gọi Claude API:', { 
@@ -844,224 +1189,166 @@ Hãy xử lý câu truy vấn này: "${nlpQuery}"
     try {
       // Clean the response text before parsing JSON
       const responseText = message.content[0].text.trim();
-      const cleanedResponse = responseText
-        .replace(/\n/g, ' ')
-        .replace(/\r/g, '')
-        .replace(/\t/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      // Try to extract JSON from the response text
-      let jsonText = null;
+      
+      // First try direct JSON parse
       try {
-        // Look for JSON object in the response text
+        response = JSON.parse(responseText);
+        logger.info('Successfully parsed response as JSON directly');
+      } catch (e) {
+        logger.info('Direct JSON parse failed, trying alternative methods');
+        
+        // Try to extract JSON from the response text
         const jsonRegex = /(\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\})/g;
         const matches = [...responseText.matchAll(jsonRegex)];
         
-        // Find the largest match which is most likely the complete JSON
         if (matches.length > 0) {
+          // Find the largest match which is most likely the complete JSON
           let largestMatch = matches[0][0];
           for (const match of matches) {
             if (match[0].length > largestMatch.length) {
               largestMatch = match[0];
             }
           }
-          jsonText = largestMatch;
           
-          // Try to parse it to validate it's actually JSON
-          JSON.parse(jsonText);
-          logger.info('Successfully extracted JSON from response text');
-        } else {
-          // Thử phương pháp khác: tìm kiếm từ dấu { đầu tiên đến dấu } cuối cùng
-          const firstBrace = responseText.indexOf('{');
-          const lastBrace = responseText.lastIndexOf('}');
-          
-          if (firstBrace !== -1 && lastBrace !== -1 && firstBrace < lastBrace) {
-            jsonText = responseText.substring(firstBrace, lastBrace + 1);
-            // Kiểm tra xem có phải JSON hợp lệ không
-            try {
-              JSON.parse(jsonText);
-              logger.info('Successfully extracted JSON using brace matching method');
-            } catch (e) {
-              jsonText = null;
-              logger.warn('Failed to extract valid JSON using brace matching method', { error: e.message });
-            }
-          }
-        }
-      } catch (error) {
-        logger.warn('Failed to extract valid JSON from response text', { error: error.message });
-        jsonText = null;
-      }
-      
-      // Thử phương pháp cuối cùng: tìm kiếm chuỗi bắt đầu bằng {"filter_criteria"
-      if (!jsonText) {
-        try {
-          const filterCriteriaStart = responseText.indexOf('{"filter_criteria"');
-          if (filterCriteriaStart !== -1) {
-            for (let endPos = responseText.length - 1; endPos > filterCriteriaStart; endPos--) {
-              if (responseText[endPos] === '}') {
-                const potentialJson = responseText.substring(filterCriteriaStart, endPos + 1);
-                try {
-                  JSON.parse(potentialJson);
-                  jsonText = potentialJson;
-                  logger.info('Successfully extracted JSON using filter_criteria marker');
+          try {
+            response = JSON.parse(largestMatch);
+            logger.info('Successfully extracted and parsed JSON using regex');
+          } catch (parseError) {
+            logger.warn('Failed to parse extracted JSON', { error: parseError.message });
+            
+            // Try one last method - find from start of filter_criteria to end
+            const filterCriteriaStart = responseText.indexOf('{"filter_criteria"');
+            if (filterCriteriaStart !== -1) {
+              let bracketCount = 0;
+              let endPos = filterCriteriaStart;
+              
+              // Find matching closing bracket
+              for (let i = filterCriteriaStart; i < responseText.length; i++) {
+                if (responseText[i] === '{') bracketCount++;
+                if (responseText[i] === '}') bracketCount--;
+                if (bracketCount === 0) {
+                  endPos = i + 1;
                   break;
-                } catch (e) {
-                  // Tiếp tục thử với vị trí kết thúc khác
                 }
               }
+              
+              const potentialJson = responseText.substring(filterCriteriaStart, endPos);
+              try {
+                response = JSON.parse(potentialJson);
+                logger.info('Successfully parsed JSON using bracket matching');
+              } catch (e) {
+                logger.error('All JSON parsing methods failed', { error: e.message });
+                throw e;
+              }
+            } else {
+              throw new Error('Could not find filter_criteria in response');
             }
           }
-        } catch (error) {
-          logger.warn('Failed to extract JSON using filter_criteria marker', { error: error.message });
+        } else {
+          throw new Error('No JSON object found in response');
         }
       }
-      
-      // Check if the response contains JSON or is plain text
-      const isJsonResponse = responseText.trim().startsWith('{') || jsonText;
-      
-      // Handle plain text responses that don't contain JSON
-      if (!isJsonResponse) {
-        logger.info('Received plain text response from AI without JSON', { response: responseText });
+
+      // Validate the parsed response
+      if (!response || typeof response !== 'object') {
+        throw new Error('Parsed response is not a valid object');
+      }
+
+      // Log the parsed response for debugging
+      logger.info('Parsed response:', { 
+        hasFilterCriteria: !!response.filter_criteria,
+        conditionsCount: response.filter_criteria?.conditions?.length,
+        conditionGroupsCount: response.filter_criteria?.conditionGroups?.length
+      });
+
+      // Normalize the response
+      response = normalizeJsonResponse(response);
+
+      // Validate response structure
+      if (!response.filter_criteria || !response.explanation) {
+        logger.error('Invalid response structure:', { 
+          hasFilterCriteria: !!response.filter_criteria,
+          hasExplanation: !!response.explanation,
+          response: responseText
+        });
         return {
           isRejected: true,
-          message: responseText
+          message: "The AI response format was invalid. Please try again with a clearer question about customer segmentation."
         };
       }
 
-      // Check if the response is a rejection message
-      if (cleanedResponse.includes("I'm designed to help you create customer segments") ||
-          cleanedResponse.includes("I cannot modify data, delete records") ||
-          cleanedResponse.includes("I cannot process this request due to security constraints") ||
-          cleanedResponse.includes("security warning") ||
-          cleanedResponse.includes("security constraints") ||
-          cleanedResponse.includes("suspicious patterns")) {
-        logger.info('AI rejected dangerous operation', { response: cleanedResponse });
+      // Validate filter_criteria structure
+      if (!response.filter_criteria.type && 
+          !response.filter_criteria.logic_operator && 
+          !Array.isArray(response.filter_criteria.conditions) &&
+          !Array.isArray(response.filter_criteria.conditionGroups)) {
+        logger.error('Invalid filter_criteria structure:', {
+          hasType: !!response.filter_criteria.type,
+          hasLogicOperator: !!response.filter_criteria.logic_operator,
+          hasConditionsArray: Array.isArray(response.filter_criteria.conditions),
+          hasConditionGroups: Array.isArray(response.filter_criteria.conditionGroups),
+          response: responseText
+        });
         return {
           isRejected: true,
-          message: responseText
+          message: "The AI response had an invalid filter structure. Please try again with a clearer question."
         };
       }
 
-      try {
-        // If we have extracted JSON from text, use that, otherwise use the whole response
-        const textToParse = jsonText || cleanedResponse;
-        
-        try {
-          response = JSON.parse(textToParse);
-        } catch (jsonError) {
-          logger.error('Failed to parse as JSON:', { error: jsonError.message, text: textToParse });
-          return {
-            isRejected: true,
-            message: "The AI couldn't generate a proper JSON response. Please try rephrasing your question to focus on customer segmentation criteria."
-          };
-        }
-        
-        // Kiểm tra cấu trúc cơ bản trước khi xử lý chi tiết
-        if (typeof response !== 'object' || response === null) {
-          logger.error('Response is not a valid JSON object', { response: textToParse });
-          return {
-            isRejected: true,
-            message: "The AI response format was invalid. Please try again with a clearer question about customer segmentation."
-          };
-        }
-
-        // Chuẩn hóa dữ liệu JSON
-        response = normalizeJsonResponse(response);
-
-        // Validate response structure
-        if (!response.filter_criteria || !response.explanation) {
-          logger.error('Invalid response structure:', { 
-            hasFilterCriteria: !!response.filter_criteria,
-            hasExplanation: !!response.explanation,
-            response: textToParse
-          });
-          return {
-            isRejected: true,
-            message: "The AI response was missing required fields. Please try again with a focus on customer segmentation criteria."
-          };
-        }
-
-        // Validate filter_criteria structure
-        if (!response.filter_criteria.type && 
-            !response.filter_criteria.logic_operator && 
-            !Array.isArray(response.filter_criteria.conditions) &&
-            !Array.isArray(response.filter_criteria.conditionGroups)) {
-          logger.error('Invalid filter_criteria structure:', {
-            hasType: !!response.filter_criteria.type,
-            hasLogicOperator: !!response.filter_criteria.logic_operator,
-            hasConditionsArray: Array.isArray(response.filter_criteria.conditions),
-            hasConditionGroups: Array.isArray(response.filter_criteria.conditionGroups),
-            response: textToParse
-          });
-          return {
-            isRejected: true,
-            message: "The AI response had an invalid filter structure. Please try again with a clearer question."
-          };
-        }
-
-        // Kiểm tra xem có ít nhất một điều kiện hợp lệ
-        const hasValidConditions = 
-          (response.filter_criteria.conditions && response.filter_criteria.conditions.length > 0) || 
-          (response.filter_criteria.conditionGroups && 
-           response.filter_criteria.conditionGroups.some(group => 
-             group.conditions && group.conditions.length > 0));
-             
-        if (!hasValidConditions) {
-          logger.error('No valid conditions found in filter criteria', { 
-            response: textToParse
-          });
-          return {
-            isRejected: true,
-            message: "Không tìm thấy điều kiện lọc hợp lệ. Vui lòng thử lại với câu hỏi cụ thể hơn."
-          };
-        }
-        
-        // Validate explanation structure
-        if (!response.explanation || !response.explanation.query_intent || 
-            !Array.isArray(response.explanation.key_conditions)) {
-          logger.info('Missing or invalid explanation structure, creating default explanation', {
-            hasExplanation: !!response.explanation,
-            hasQueryIntent: response.explanation && !!response.explanation.query_intent,
-            hasKeyConditionsArray: response.explanation && Array.isArray(response.explanation.key_conditions)
-          });
-          
-          // Tạo explanation mặc định thay vì báo lỗi
-          response.explanation = {
-            query_intent: nlpQuery,
-            key_conditions: ["Generated from natural language query"]
-          };
-        }
-
-        // Use filter criteria service to standardize values and handle operators
-        // The service will use the filter_criteria from Claude as a base and enhance it
-        const enhancedFilterCriteria = await valueStandardizationService.standardizeFilterCriteria(response.filter_criteria, user);
-
-        // Return the filter criteria and explanation only
+      // Kiểm tra xem có ít nhất một điều kiện hợp lệ
+      const hasValidConditions = 
+        (response.filter_criteria.conditions && response.filter_criteria.conditions.length > 0) || 
+        (response.filter_criteria.conditionGroups && 
+         response.filter_criteria.conditionGroups.some(group => 
+           group.conditions && group.conditions.length > 0));
+           
+      if (!hasValidConditions) {
+        logger.error('No valid conditions found in filter criteria', { 
+          response: responseText
+        });
         return {
-          isRejected: false,
-          filter_criteria: enhancedFilterCriteria,
-          explanation: response.explanation
+          isRejected: true,
+          message: "Không tìm thấy điều kiện lọc hợp lệ. Vui lòng thử lại với câu hỏi cụ thể hơn."
         };
-      } catch (parseError) {
-        logger.error('Error processing AI response:', { 
-          error: parseError,
-          errorMessage: parseError.message,
-          response: jsonText || cleanedResponse
+      }
+      
+      // Validate explanation structure
+      if (!response.explanation || !response.explanation.query_intent || 
+          !Array.isArray(response.explanation.key_conditions)) {
+        logger.info('Missing or invalid explanation structure, creating default explanation', {
+          hasExplanation: !!response.explanation,
+          hasQueryIntent: response.explanation && !!response.explanation.query_intent,
+          hasKeyConditionsArray: response.explanation && Array.isArray(response.explanation.key_conditions)
         });
         
-        return {
-          isRejected: true,
-          message: "There was an error processing the AI response. Please try again with a simpler question."
+        // Tạo explanation mặc định thay vì báo lỗi
+        response.explanation = {
+          query_intent: nlpQuery,
+          key_conditions: ["Generated from natural language query"]
         };
       }
-    } catch (error) {
-      logger.error('Error generating filter criteria from NLP:', { 
-        error: error.message, 
-        stack: error.stack,
-        nlpQuery
+
+      // Use filter criteria service to standardize values and handle operators
+      // The service will use the filter_criteria from Claude as a base and enhance it
+      const enhancedFilterCriteria = await valueStandardizationService.standardizeFilterCriteria(response.filter_criteria, user);
+
+      // Return the filter criteria and explanation only
+      return {
+        isRejected: false,
+        filter_criteria: enhancedFilterCriteria,
+        explanation: response.explanation
+      };
+    } catch (parseError) {
+      logger.error('Error processing AI response:', { 
+        error: parseError,
+        errorMessage: parseError.message,
+        response: responseText
       });
-      throw new Error(`Failed to generate filter criteria from natural language: ${error.message}`);
+      
+      return {
+        isRejected: true,
+        message: "There was an error processing the AI response. Please try again with a simpler question."
+      };
     }
   } catch (error) {
     logger.error('Error generating filter criteria from NLP:', { 
@@ -1168,7 +1455,7 @@ const normalizeJsonResponse = (response) => {
       };
     }
     
-    // Create a copy to avoid modifying original data
+    // Create a deep copy to avoid modifying original data
     let normalized = JSON.parse(JSON.stringify(response));
     
     // Handle string response
@@ -1194,6 +1481,12 @@ const normalizeJsonResponse = (response) => {
       };
     }
 
+    // Log the original structure
+    logger.info('Normalizing response structure:', {
+      originalConditions: normalized.filter_criteria?.conditions?.length || 0,
+      originalGroups: normalized.filter_criteria?.conditionGroups?.length || 0
+    });
+
     // Case 1: Response is a direct event condition
     if (normalized.type === 'event' && normalized.columnKey && normalized.eventType) {
       logger.info('Found direct event condition, wrapping in proper structure');
@@ -1216,7 +1509,7 @@ const normalizeJsonResponse = (response) => {
       return {
         filter_criteria: {
           conditions: normalized.conditions,
-          conditionGroups: [],
+          conditionGroups: normalized.conditionGroups || [],
           rootOperator: normalized.rootOperator || "AND"
         },
         explanation: normalized.explanation || {
@@ -1260,12 +1553,12 @@ const normalizeJsonResponse = (response) => {
       };
     }
 
-    // Ensure filter_criteria has conditions array
+    // Ensure filter_criteria has conditions array and preserve existing conditions
     if (!Array.isArray(normalized.filter_criteria.conditions)) {
       normalized.filter_criteria.conditions = [];
     }
 
-    // Ensure filter_criteria has conditionGroups array
+    // Ensure filter_criteria has conditionGroups array and preserve existing groups
     if (!Array.isArray(normalized.filter_criteria.conditionGroups)) {
       normalized.filter_criteria.conditionGroups = [];
     }
@@ -1283,9 +1576,18 @@ const normalizeJsonResponse = (response) => {
       };
     }
 
+    // Log the normalized structure
+    logger.info('Normalized response structure:', {
+      finalConditions: normalized.filter_criteria.conditions.length,
+      finalGroups: normalized.filter_criteria.conditionGroups.length
+    });
+
     return normalized;
   } catch (error) {
-    logger.error('Error normalizing JSON response', { error: error.message });
+    logger.error('Error normalizing JSON response', { 
+      error: error.message,
+      originalResponse: JSON.stringify(response)
+    });
     return {
       isRejected: true,
       message: "Lỗi khi xử lý phản hồi. Vui lòng thử lại."
