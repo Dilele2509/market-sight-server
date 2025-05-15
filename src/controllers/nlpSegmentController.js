@@ -1189,165 +1189,99 @@ Hãy xử lý câu truy vấn này: "${nlpQuery}"
     try {
       // Clean the response text before parsing JSON
       const responseText = message.content[0].text.trim();
+      let parsedResponse;
       
       // First try direct JSON parse
       try {
-        response = JSON.parse(responseText);
-        logger.info('Successfully parsed response as JSON directly');
-      } catch (e) {
-        logger.info('Direct JSON parse failed, trying alternative methods');
-        
-        // Try to extract JSON from the response text
-        const jsonRegex = /(\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\})/g;
-        const matches = [...responseText.matchAll(jsonRegex)];
-        
-        if (matches.length > 0) {
-          // Find the largest match which is most likely the complete JSON
-          let largestMatch = matches[0][0];
-          for (const match of matches) {
-            if (match[0].length > largestMatch.length) {
-              largestMatch = match[0];
-            }
-          }
-          
-          try {
-            response = JSON.parse(largestMatch);
-            logger.info('Successfully extracted and parsed JSON using regex');
-          } catch (parseError) {
-            logger.warn('Failed to parse extracted JSON', { error: parseError.message });
-            
-            // Try one last method - find from start of filter_criteria to end
-            const filterCriteriaStart = responseText.indexOf('{"filter_criteria"');
-            if (filterCriteriaStart !== -1) {
-              let bracketCount = 0;
-              let endPos = filterCriteriaStart;
-              
-              // Find matching closing bracket
-              for (let i = filterCriteriaStart; i < responseText.length; i++) {
-                if (responseText[i] === '{') bracketCount++;
-                if (responseText[i] === '}') bracketCount--;
-                if (bracketCount === 0) {
-                  endPos = i + 1;
-                  break;
-                }
-              }
-              
-              const potentialJson = responseText.substring(filterCriteriaStart, endPos);
-              try {
-                response = JSON.parse(potentialJson);
-                logger.info('Successfully parsed JSON using bracket matching');
-              } catch (e) {
-                logger.error('All JSON parsing methods failed', { error: e.message });
-                throw e;
-              }
-            } else {
-              throw new Error('Could not find filter_criteria in response');
-            }
-          }
-        } else {
-          throw new Error('No JSON object found in response');
+        parsedResponse = JSON.parse(responseText);
+        if (parsedResponse?.filter_criteria) {
+          logger.info('Successfully parsed complete JSON response');
+          return parsedResponse;
         }
+      } catch (e) {
+        logger.info('Direct JSON parse failed, trying alternative parsing');
+      }
+
+      // If we get here, we need to extract and reconstruct the JSON
+      const filterCriteriaMatch = responseText.match(/{\s*"filter_criteria"\s*:\s*({[\s\S]*?})\s*,\s*"explanation"/);
+      
+      if (filterCriteriaMatch && filterCriteriaMatch[1]) {
+        // Extract the filter criteria content
+        const filterCriteriaContent = filterCriteriaMatch[1];
+        
+        // Extract explanation if present
+        const explanationMatch = responseText.match(/"explanation"\s*:\s*"([^"]+)"/);
+        const explanation = explanationMatch ? explanationMatch[1] : null;
+        
+        // Construct the complete JSON
+        const reconstructedJson = {
+          filter_criteria: JSON.parse(filterCriteriaContent),
+          explanation: explanation ? {
+            query_intent: explanation,
+            key_conditions: ["Generated from Claude AI"]
+          } : undefined
+        };
+
+        logger.info('Successfully reconstructed JSON from parts', {
+          hasFilterCriteria: !!reconstructedJson.filter_criteria,
+          hasExplanation: !!reconstructedJson.explanation
+        });
+
+        parsedResponse = reconstructedJson;
+      } else {
+        logger.error('Could not extract filter criteria from response');
+        return {
+          isRejected: true,
+          message: "Không thể trích xuất điều kiện lọc từ phản hồi"
+        };
       }
 
       // Validate the parsed response
-      if (!response || typeof response !== 'object') {
-        throw new Error('Parsed response is not a valid object');
+      if (!parsedResponse?.filter_criteria?.conditions) {
+        logger.error('Invalid filter criteria structure after parsing');
+        return {
+          isRejected: true,
+          message: "Cấu trúc điều kiện lọc không hợp lệ"
+        };
       }
-
-      // Log the parsed response for debugging
-      logger.info('Parsed response:', { 
-        hasFilterCriteria: !!response.filter_criteria,
-        conditionsCount: response.filter_criteria?.conditions?.length,
-        conditionGroupsCount: response.filter_criteria?.conditionGroups?.length
-      });
 
       // Normalize the response
-      response = normalizeJsonResponse(response);
+      const normalizedResponse = normalizeJsonResponse(parsedResponse);
 
-      // Validate response structure
-      if (!response.filter_criteria || !response.explanation) {
-        logger.error('Invalid response structure:', { 
-          hasFilterCriteria: !!response.filter_criteria,
-          hasExplanation: !!response.explanation,
-          response: responseText
-        });
-        return {
-          isRejected: true,
-          message: "The AI response format was invalid. Please try again with a clearer question about customer segmentation."
-        };
-      }
-
-      // Validate filter_criteria structure
-      if (!response.filter_criteria.type && 
-          !response.filter_criteria.logic_operator && 
-          !Array.isArray(response.filter_criteria.conditions) &&
-          !Array.isArray(response.filter_criteria.conditionGroups)) {
-        logger.error('Invalid filter_criteria structure:', {
-          hasType: !!response.filter_criteria.type,
-          hasLogicOperator: !!response.filter_criteria.logic_operator,
-          hasConditionsArray: Array.isArray(response.filter_criteria.conditions),
-          hasConditionGroups: Array.isArray(response.filter_criteria.conditionGroups),
-          response: responseText
-        });
-        return {
-          isRejected: true,
-          message: "The AI response had an invalid filter structure. Please try again with a clearer question."
-        };
-      }
-
-      // Kiểm tra xem có ít nhất một điều kiện hợp lệ
-      const hasValidConditions = 
-        (response.filter_criteria.conditions && response.filter_criteria.conditions.length > 0) || 
-        (response.filter_criteria.conditionGroups && 
-         response.filter_criteria.conditionGroups.some(group => 
-           group.conditions && group.conditions.length > 0));
-           
-      if (!hasValidConditions) {
-        logger.error('No valid conditions found in filter criteria', { 
-          response: responseText
-        });
-        return {
-          isRejected: true,
-          message: "Không tìm thấy điều kiện lọc hợp lệ. Vui lòng thử lại với câu hỏi cụ thể hơn."
-        };
-      }
-      
-      // Validate explanation structure
-      if (!response.explanation || !response.explanation.query_intent || 
-          !Array.isArray(response.explanation.key_conditions)) {
-        logger.info('Missing or invalid explanation structure, creating default explanation', {
-          hasExplanation: !!response.explanation,
-          hasQueryIntent: response.explanation && !!response.explanation.query_intent,
-          hasKeyConditionsArray: response.explanation && Array.isArray(response.explanation.key_conditions)
-        });
-        
-        // Tạo explanation mặc định thay vì báo lỗi
-        response.explanation = {
-          query_intent: nlpQuery,
-          key_conditions: ["Generated from natural language query"]
-        };
-      }
+      // Log the normalized response for debugging
+      logger.info('Normalized response:', {
+        hasFilterCriteria: !!normalizedResponse?.filter_criteria,
+        conditions: normalizedResponse?.filter_criteria?.conditions?.length,
+        conditionGroups: normalizedResponse?.filter_criteria?.conditionGroups?.length,
+        rootOperator: normalizedResponse?.filter_criteria?.rootOperator
+      });
 
       // Use filter criteria service to standardize values and handle operators
-      // The service will use the filter_criteria from Claude as a base and enhance it
-      const enhancedFilterCriteria = await valueStandardizationService.standardizeFilterCriteria(response.filter_criteria, user);
+      const enhancedFilterCriteria = await valueStandardizationService.standardizeFilterCriteria(
+        normalizedResponse.filter_criteria, 
+        user
+      );
 
-      // Return the filter criteria and explanation only
+      // Return the final result
       return {
         isRejected: false,
         filter_criteria: enhancedFilterCriteria,
-        explanation: response.explanation
+        explanation: normalizedResponse.explanation || {
+          query_intent: "Processed from natural language query",
+          key_conditions: ["Generated from Claude AI"]
+        }
       };
-    } catch (parseError) {
+
+    } catch (error) {
       logger.error('Error processing AI response:', { 
-        error: parseError,
-        errorMessage: parseError.message,
-        response: responseText
+        error: error.message,
+        errorStack: error.stack,
+        response: message?.content?.[0]?.text || 'No response text available'
       });
       
       return {
         isRejected: true,
-        message: "There was an error processing the AI response. Please try again with a simpler question."
+        message: "Lỗi khi xử lý phản hồi từ AI. Vui lòng thử lại."
       };
     }
   } catch (error) {
@@ -1447,151 +1381,89 @@ const createSegmentationFromNLP = async (req, res) => {
 const normalizeJsonResponse = (response) => {
   try {
     // Check if response has error field
-    if (response && response.error) {
+    if (response?.error) {
       logger.info('Claude returned error message:', { error: response.error });
       return {
         isRejected: true,
         message: response.error
       };
     }
-    
-    // Create a deep copy to avoid modifying original data
-    let normalized = JSON.parse(JSON.stringify(response));
-    
-    // Handle string response
-    if (typeof normalized === 'string') {
-      try {
-        const parsedJson = JSON.parse(normalized);
-        return normalizeJsonResponse(parsedJson);
-      } catch (e) {
-        logger.warn('Response is a string but not valid JSON', { response: normalized });
-        return {
-          isRejected: true,
-          message: "Phản hồi không phải là JSON hợp lệ. Vui lòng thử lại."
-        };
-      }
-    }
-    
-    // Check if response is not an object
-    if (typeof normalized !== 'object' || normalized === null) {
-      logger.warn('Response is not an object', { responseType: typeof normalized });
-      return {
-        isRejected: true,
-        message: "Phản hồi không phải là đối tượng hợp lệ. Vui lòng thử lại."
-      };
-    }
 
-    // Log the original structure
-    logger.info('Normalizing response structure:', {
-      originalConditions: normalized.filter_criteria?.conditions?.length || 0,
-      originalGroups: normalized.filter_criteria?.conditionGroups?.length || 0
+    // Log the input response
+    logger.info('Normalizing response:', {
+      inputHasFilterCriteria: !!response?.filter_criteria,
+      inputConditions: response?.filter_criteria?.conditions?.length,
+      inputGroups: response?.filter_criteria?.conditionGroups?.length
     });
 
-    // Case 1: Response is a direct event condition
-    if (normalized.type === 'event' && normalized.columnKey && normalized.eventType) {
-      logger.info('Found direct event condition, wrapping in proper structure');
-      return {
-        filter_criteria: {
-          conditions: [normalized],
-          conditionGroups: [],
-          rootOperator: "AND"
-        },
-        explanation: {
-          query_intent: "Processed from natural language query",
-          key_conditions: ["Generated from Claude AI"]
-        }
-      };
+    // Create a deep copy to avoid modifying original data
+    let normalized = JSON.parse(JSON.stringify(response));
+
+    // Basic structure validation
+    if (!normalized?.filter_criteria) {
+      logger.warn('Missing filter_criteria in response');
+      throw new Error('Missing filter_criteria in response');
     }
 
-    // Case 2: Response has conditions array but no filter_criteria wrapper
-    if (!normalized.filter_criteria && Array.isArray(normalized.conditions)) {
-      logger.info('Found direct conditions array, wrapping in proper structure');
-      return {
-        filter_criteria: {
-          conditions: normalized.conditions,
-          conditionGroups: normalized.conditionGroups || [],
-          rootOperator: normalized.rootOperator || "AND"
-        },
-        explanation: normalized.explanation || {
-          query_intent: "Processed from natural language query",
-          key_conditions: ["Generated from Claude AI"]
-        }
-      };
-    }
-
-    // Case 3: Response is a single condition
-    if (!normalized.filter_criteria && normalized.id && normalized.type) {
-      logger.info('Found single condition, wrapping in proper structure');
-      return {
-        filter_criteria: {
-          conditions: [normalized],
-          conditionGroups: [],
-          rootOperator: "AND"
-        },
-        explanation: {
-          query_intent: "Processed from natural language query",
-          key_conditions: ["Generated from Claude AI"]
-        }
-      };
-    }
-
-    // Normalize field names
-    if (!normalized.filter_criteria && normalized.filterCriteria) {
-      normalized.filter_criteria = normalized.filterCriteria;
-    }
-
-    if (!normalized.explanation && normalized.queryExplanation) {
-      normalized.explanation = normalized.queryExplanation;
-    }
-
-    // Ensure filter_criteria exists and has proper structure
-    if (!normalized.filter_criteria) {
-      logger.warn('Missing filter_criteria in response', { response: JSON.stringify(normalized) });
-      return {
-        isRejected: true,
-        message: "Không tìm thấy tiêu chí lọc trong phản hồi. Vui lòng thử lại với yêu cầu cụ thể hơn."
-      };
-    }
-
-    // Ensure filter_criteria has conditions array and preserve existing conditions
-    if (!Array.isArray(normalized.filter_criteria.conditions)) {
-      normalized.filter_criteria.conditions = [];
-    }
-
-    // Ensure filter_criteria has conditionGroups array and preserve existing groups
-    if (!Array.isArray(normalized.filter_criteria.conditionGroups)) {
-      normalized.filter_criteria.conditionGroups = [];
-    }
+    // Ensure arrays exist with their original content
+    normalized.filter_criteria.conditions = Array.isArray(normalized.filter_criteria.conditions) 
+      ? normalized.filter_criteria.conditions 
+      : [];
+    
+    normalized.filter_criteria.conditionGroups = Array.isArray(normalized.filter_criteria.conditionGroups)
+      ? normalized.filter_criteria.conditionGroups
+      : [];
 
     // Ensure rootOperator exists
-    if (!normalized.filter_criteria.rootOperator) {
-      normalized.filter_criteria.rootOperator = "AND";
-    }
+    normalized.filter_criteria.rootOperator = normalized.filter_criteria.rootOperator || "AND";
 
-    // Ensure explanation exists
-    if (!normalized.explanation) {
-      normalized.explanation = {
-        query_intent: "Processed from natural language query",
-        key_conditions: ["Generated from Claude AI"]
+    // Ensure each condition has required fields
+    normalized.filter_criteria.conditions = normalized.filter_criteria.conditions.map(condition => ({
+      ...condition,
+      chosen: condition.chosen ?? false,
+      selected: condition.selected ?? false,
+      value2: condition.value2 ?? ""
+    }));
+
+    // Ensure each condition group has required fields
+    normalized.filter_criteria.conditionGroups = normalized.filter_criteria.conditionGroups.map(group => {
+      const normalizedGroup = {
+        ...group,
+        conditions: Array.isArray(group.conditions) ? group.conditions : []
       };
-    }
+
+      normalizedGroup.conditions = normalizedGroup.conditions.map(condition => ({
+        ...condition,
+        chosen: condition.chosen ?? false,
+        selected: condition.selected ?? false,
+        value2: condition.value2 ?? ""
+      }));
+
+      return normalizedGroup;
+    });
 
     // Log the normalized structure
-    logger.info('Normalized response structure:', {
-      finalConditions: normalized.filter_criteria.conditions.length,
-      finalGroups: normalized.filter_criteria.conditionGroups.length
+    logger.info('Normalized structure:', {
+      conditions: normalized.filter_criteria.conditions.map(c => ({
+        id: c.id,
+        type: c.type,
+        field: c.field
+      })),
+      conditionGroups: normalized.filter_criteria.conditionGroups.map(g => ({
+        id: g.id,
+        operator: g.operator,
+        conditionCount: g.conditions.length
+      }))
     });
 
     return normalized;
   } catch (error) {
     logger.error('Error normalizing JSON response', { 
       error: error.message,
+      errorStack: error.stack,
       originalResponse: JSON.stringify(response)
     });
-    return {
-      isRejected: true,
-      message: "Lỗi khi xử lý phản hồi. Vui lòng thử lại."
-    };
+    throw error;
   }
 };
 
