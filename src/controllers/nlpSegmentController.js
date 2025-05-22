@@ -1,4 +1,5 @@
 import { getSupabase, logger } from '../data/database.js';
+import { saveChatHistory, getRecentChatHistory } from '../data/chatHistoryData.js';
 import Anthropic from '@anthropic-ai/sdk';
 
 const anthropic = new Anthropic({
@@ -6,8 +7,23 @@ const anthropic = new Anthropic({
 });
 
 // Function to generate filter criteria from natural language using Claude
-const generateFilterCriteriaFromNLP = async (nlpQuery, user) => {
+const generateFilterCriteriaFromNLP = async (nlpQuery, user, chatHistory = []) => {
   try {
+    // Add chat history context to the prompt if available
+    let historyContext = '';
+    if (chatHistory.length > 0) {
+      historyContext = `\nCONVERSATION HISTORY:
+${chatHistory.map(chat => `
+User: ${chat.query}
+Assistant: ${JSON.stringify({
+  explanation: chat.explanation,
+  filter_criteria: chat.filter_criteria
+})}
+`).join('\n')}
+
+Current query is a modification of the previous conversation. Please consider the history above and modify the previous response according to the new requirements.`;
+    }
+
     // Define the tool for generating filter criteria
     const tools = [
       {
@@ -85,7 +101,8 @@ const generateFilterCriteriaFromNLP = async (nlpQuery, user) => {
     // Add security context to the prompt
     const prompt = `System Prompt for Intelligent Customer Segmentation
     You are a professional AI assistant specialized in creating customer segmentation from natural language. Your task is to analyze user requirements and convert them into structured filter criteria that can be used for customer segmentation.
-    Use only the \`generate_filter_criteria\` tool to return the response with JSON object format.  Always use Vietnamese when return explanation in response
+    ${historyContext}
+    Use only the \`generate_filter_criteria\` tool to return the response with JSON object format. Always use Vietnamese when return explanation in response
     Do not answer in free text. Do not include any explanation outside of the tool call.
     Make sure your tool call returns an object with the following structure:
     {
@@ -1045,23 +1062,46 @@ const createSegmentationFromNLP = async (req, res) => {
 // Function to process chatbot query and return filter criteria
 const processChatbotQuery = async (req, res) => {
   try {
-    const { nlpQuery } = req.body;
+    const { nlpQuery, isModification = false } = req.body;
     const user = req.user;
 
     logger.info('Chatbot query request', {
       nlpQuery,
-      userId: user?.user_id
+      userId: user?.user_id,
+      isModification
     });
 
-    if (!user || !user.user_id || !user.business_id) {
+    if (!user || !user.user_id) {
       return res.status(400).json({
         success: false,
-        error: "User authentication required with business_id"
+        error: "User authentication required"
+      });
+    }
+
+    // Get recent chat history if this is a modification request
+    let chatHistory = [];
+    if (isModification) {
+      const historyData = await getRecentChatHistory(user.user_id);
+      if (historyData && historyData.length > 0) {
+        chatHistory = historyData[0].conversation.history || [];
+      }
+      logger.info('Retrieved chat history for modification', {
+        historyCount: chatHistory.length
       });
     }
 
     // Generate filter criteria from NLP
-    const nlpResult = await generateFilterCriteriaFromNLP(nlpQuery, user);
+    const nlpResult = await generateFilterCriteriaFromNLP(nlpQuery, user, chatHistory);
+
+    // Prepare conversation data
+    const conversation = {
+      query: nlpQuery,
+      explanation: nlpResult.explanation,
+      filter_criteria: nlpResult.filter_criteria
+    };
+
+    // Save chat history
+    await saveChatHistory(user.user_id, conversation, isModification);
 
     // Check if we have explanation but no valid filter criteria
     if (nlpResult.explanation?.query_intent && 
@@ -1069,11 +1109,7 @@ const processChatbotQuery = async (req, res) => {
          (!nlpResult.filter_criteria.conditions?.length && !nlpResult.filter_criteria.conditionGroups?.length))) {
       return res.json({
         success: false,
-        data: {
-          query: nlpQuery,
-          explanation: nlpResult.explanation,
-          filter_criteria: nlpResult.filter_criteria
-        }
+        data: conversation
       });
     }
 
@@ -1100,11 +1136,7 @@ const processChatbotQuery = async (req, res) => {
 
     res.json({
       success: true,
-      data: {
-        query: nlpQuery,
-        explanation: nlpResult.explanation,
-        filter_criteria: nlpResult.filter_criteria
-      }
+      data: conversation
     });
   } catch (error) {
     logger.error('Error processing chatbot query:', { 
