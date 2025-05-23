@@ -18,7 +18,7 @@ const { HOST, PORT } = process.env;
 const app = express();
 
 const corsOptions = {
-  origin: 'http://103.116.52.141:8080',
+  origin: 'http://retailsight.pantech.vn:8080',
   credentials: true,                // Cho phép gửi thông tin xác thực (cookie, header authorization)
 };
 
