@@ -137,7 +137,7 @@ const handleOAuthCallback = async (req, res) => {
     // Encode data as base64 to avoid query string issues
     const resultEncoded = Buffer.from(JSON.stringify(result)).toString('base64');
 
-    res.redirect(`http://localhost:8080/sync-config?success=true&data=${encodeURIComponent(resultEncoded)}`);
+    res.redirect(`http://103.116.52.141:8080/sync-config?success=true&data=${encodeURIComponent(resultEncoded)}`);
   } catch (error) {
     logger.error('Error handling OAuth callback', {
       error: error.message,
