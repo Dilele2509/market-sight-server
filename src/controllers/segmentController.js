@@ -1,4 +1,4 @@
-import { checkSegmentExists, saveOrUpdateSegment, getSegmentByUser, updateStatus, insertSegmentCustomersToSupabase } from "../data/segmentData.js";
+import { checkSegmentExists, saveOrUpdateSegment, getSegmentByUser, updateStatus, insertSegmentCustomersToSupabase, getHistoryConversationByUser } from "../data/segmentData.js";
 
 const allSegmentByUser = async (req, res) => {
     try {
@@ -18,6 +18,28 @@ const allSegmentByUser = async (req, res) => {
         console.error('Error get segment:', error);
         return res.status(500).json({
             message: 'An error occurred while get the segment.'
+        });
+    }
+}
+
+const getHistoryConversation = async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        const response = await getHistoryConversationByUser(user_id)
+        console.log(response);
+
+        if (response) {
+            return res.status(response.statusCode).json({
+                message: response.message,
+                data: response.data
+            })
+        } else return res.status(401).json({
+            message: 'fail to get all history conversation'
+        })
+    } catch (error) {
+        console.error('Error get segment:', error);
+        return res.status(500).json({
+            message: 'An error occurred while get the history conversation.'
         });
     }
 }
@@ -135,5 +157,6 @@ export {
     allSegmentByUser,
     updateStatusSegment,
     deleteSegment,
-    insertSegmentCustomer
+    insertSegmentCustomer,
+    getHistoryConversation
 };

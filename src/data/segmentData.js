@@ -19,6 +19,25 @@ const getSegmentByUser = async (user_id) => {
     })
 }
 
+const getHistoryConversationByUser = async (user_id) => {
+    const { data, error } = await supabase
+        .from('ai_chat_history')
+        .select('*')
+        .eq('user_id', user_id)
+
+    if (error) {
+        return ({
+            statusCode: 401,
+            message: 'Failed to get history conversation',
+            data: error
+        })
+    } else return ({
+        statusCode: 200,
+        message: 'Loaded history conversation successful',
+        data: data
+    })
+}
+
 const checkSegmentExists = async (segment_id) => {
     try {
         const { data, error } = await supabase
@@ -213,5 +232,6 @@ export {
     getSegmentByUser,
     updateStatus,
     deleteSegmentItem,
-    insertSegmentCustomersToSupabase
+    insertSegmentCustomersToSupabase,
+    getHistoryConversationByUser
 };

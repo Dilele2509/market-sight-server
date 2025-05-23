@@ -1,6 +1,6 @@
 import express from 'express';
 import { authenticationToken } from '../controllers/authController.js';
-import { allSegmentByUser, checkSegment, deleteSegment, insertSegmentCustomer, saveSegment, updateStatusSegment } from '../controllers/segmentController.js';
+import { allSegmentByUser, checkSegment, deleteSegment, getHistoryConversation, insertSegmentCustomer, saveSegment, updateStatusSegment } from '../controllers/segmentController.js';
 import { createSegmentationFromNLP, processChatbotQuery } from '../controllers/nlpSegmentController.js';
 
 const router = express.Router();
@@ -16,5 +16,6 @@ router.post('/segment/add-state-sync', authenticationToken, insertSegmentCustome
 // New NLP-based segmentation routes
 router.post('/segment/nlp/create', authenticationToken, createSegmentationFromNLP);
 router.post('/segment/nlp/chatbot', authenticationToken, processChatbotQuery);
+router.get('/segment/ai/history', authenticationToken, getHistoryConversation);
 
 export default router;
