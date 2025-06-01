@@ -19,10 +19,10 @@ const app = express();
 
 const corsOptions = {
   origin: [
-    'http://localhost',         
-    'http://localhost:80',
-    'http://localhost:8080',
-    'http://localhost:81'
+    'http://retailsight.pantech.vn',         
+    'http://retailsight.pantech.vn:80',
+    'http://retailsight.pantech.vn:8080',
+    'http://retailsight.pantech.vn:81'
   ],
   credentials: true,                // Cho phép gửi thông tin xác thực (cookie, header authorization)
 };

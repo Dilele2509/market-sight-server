@@ -36,6 +36,7 @@ const addUser = async (req, res) => {
         }
         
         // Broadcast new user registration to all connected clients
+        console.log(response.data);
         broadcast({
             type: 'NEW_USER_REGISTERED',
             data: {
