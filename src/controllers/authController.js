@@ -58,28 +58,6 @@ const authenticationToken = async (req, res, next) => {
     });
 };
 
-const checkRegister = async (req, res, next) => {
-    try {
-        const { registerType } = req.body;
-
-        if (registerType === 'account') {
-            req.nextHandler = 'addUser';
-            next();
-        } else if (registerType === 'business') {
-            req.nextHandler = 'addBusiness';
-            next();
-        } else {
-            return res.status(400).json({
-                message: 'Cannot define register type',
-            });
-        }
-    } catch (error) {
-        res.status(400).json({
-            message: 'Error in registration type middleware',
-        });
-    }
-};
-
 const verifyEmailToken = async (req, res) => {
     const { token } = req.query;
     try {
@@ -103,4 +81,4 @@ const verifyEmailToken = async (req, res) => {
 };
 
 
-export { login, authenticationToken, checkRegister, verifyEmailToken };
+export { login, authenticationToken, verifyEmailToken };

@@ -1,9 +1,11 @@
-import WebSocket from'ws';
+import { WebSocketServer, WebSocket } from 'ws';
+import dotenv from 'dotenv';
+
 dotenv.config();
 
 const { WS_PORT } = process.env;
 // Tạo WebSocket Server
-const wss = new WebSocket.Server({ port: WS_PORT }); 
+const wss = new WebSocketServer({ port: WS_PORT }); 
 
 wss.on('connection', (ws) => {
     console.log('Client connected');
@@ -19,4 +21,4 @@ const broadcast = (message) => {
     });
 };
 
-module.exports = { broadcast };
+export { broadcast };

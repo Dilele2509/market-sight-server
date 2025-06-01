@@ -11,7 +11,12 @@ const { HOST, AUTH_PORT } = process.env;
 const app = express();
 
 const corsOptions = {
-  origin: 'http://retailsight.pantech.vn', 
+  origin: [
+    'http://localhost',         
+    'http://localhost:80',
+    'http://localhost:8080',
+    'http://localhost:81'
+  ],
   credentials: true,               
 };
 

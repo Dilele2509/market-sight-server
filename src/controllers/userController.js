@@ -1,5 +1,6 @@
 import { getUserByEmail, getUsers, insertUser } from '../data/userData.js';
 import { sendVerificationEmail } from '../services/nodemailer.js';
+import { broadcast } from '../services/websocketService.js';
 
 const getAllUsers = async (req, res) => {
     try {
@@ -33,9 +34,19 @@ const addUser = async (req, res) => {
                 message: response.detail
             })
         }
-        else if (response.status === 200) {
-            sendVerificationEmail(response.data.email, response.token)
-        }
+        
+        // Broadcast new user registration to all connected clients
+        broadcast({
+            type: 'NEW_USER_REGISTERED',
+            data: {
+                user_id: response.data.user_id,
+                email: response.data.email,
+                first_name: response.data.first_name,
+                last_name: response.data.last_name,
+                created_at: response.data.created_at
+            }
+        });
+
         res.status(200).json({
             message: 'Register successfully, check your email to activate account',
             data: response.data
